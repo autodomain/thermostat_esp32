@@ -4,6 +4,33 @@ extern bool ext_temp_enabled;
 extern char ext_temp_topic[100];
 extern float ext_temp_val;
 
+extern bool opt_start_enabled;
+extern float opt_start_speed;
+extern bool opt_start_active;
+extern bool boost_active;
+extern uint16_t boost_duration_min;
+extern float boost_temp;
+extern float eco_temp;
+extern float away_temp;
+extern uint8_t remote_sensor_mode;
+extern char remote_sensor_topic[100];
+extern float remote_temp_val;
+extern unsigned long remote_temp_last_ms;
+
+extern bool thermal_learning_enabled;
+extern float learned_heat_speed;
+extern float learned_cool_speed;
+extern uint16_t heat_cycles_count;
+extern uint16_t cool_cycles_count;
+extern bool training_guided_active;
+extern uint16_t training_guided_duration_min;
+void start_thermal_training(uint16_t duration_minutes);
+void cancel_or_finish_thermal_training(bool completed);
+
+float get_effective_temperature();
+void trigger_boost(uint16_t duration_minutes, float target_temp);
+void cancel_boost();
+
 float parse_temperature_payload(const String& payload) {
   String p = payload;
   p.trim();
@@ -113,6 +140,64 @@ void publish_ha_state() {
   dtostrf(h_7d, 0, 2, buf);
   snprintf(topic, sizeof(topic), "%sruntime/7days", thermostat_id);
   client.publish(topic, buf, true, 0);
+
+  // Duty cycle accensione oggi in %
+  struct tm timeinfo_dc;
+  float duty_cycle_today = 0.0f;
+  if (getLocalTime(&timeinfo_dc, 10)) {
+    uint32_t sec_today = timeinfo_dc.tm_hour * 3600 + timeinfo_dc.tm_min * 60 + timeinfo_dc.tm_sec;
+    if (sec_today > 30) {
+      duty_cycle_today = constrain((runtime_today_sec * 100.0f) / sec_today, 0.0f, 100.0f);
+    }
+  }
+  dtostrf(duty_cycle_today, 0, 1, buf);
+  snprintf(topic, sizeof(topic), "%sruntime/duty_cycle", thermostat_id);
+  client.publish(topic, buf, true, 0);
+
+  // Anticipo termico stato
+  snprintf(topic, sizeof(topic), "%sopt_start/get", thermostat_id);
+  client.publish(topic, opt_start_enabled ? "ON" : "OFF", true, 0);
+
+  dtostrf(opt_start_speed, 0, 1, buf);
+  snprintf(topic, sizeof(topic), "%sopt_start_speed/get", thermostat_id);
+  client.publish(topic, buf, true, 0);
+
+  // Sensore remoto e temperatura effettiva
+  snprintf(topic, sizeof(topic), "%sremote_sensor/mode", thermostat_id);
+  snprintf(buf, sizeof(buf), "%u", (unsigned)remote_sensor_mode);
+  client.publish(topic, buf, true, 0);
+
+  if (!isnan(remote_temp_val)) {
+    dtostrf(remote_temp_val, 0, 1, buf);
+    snprintf(topic, sizeof(topic), "%sremote_sensor/val", thermostat_id);
+    client.publish(topic, buf, true, 0);
+  }
+
+  float eff_t = get_effective_temperature();
+  if (!isnan(eff_t)) {
+    dtostrf(eff_t, 0, 1, buf);
+    snprintf(topic, sizeof(topic), "%stemperature/effective", thermostat_id);
+    client.publish(topic, buf, true, 0);
+  }
+
+  // Auto-Apprendimento Termico & Calibrazione
+  snprintf(topic, sizeof(topic), "%sthermal_learning/get", thermostat_id);
+  client.publish(topic, thermal_learning_enabled ? "ON" : "OFF", true, 0);
+
+  dtostrf(learned_heat_speed, 0, 2, buf);
+  snprintf(topic, sizeof(topic), "%slearned_heat_speed/get", thermostat_id);
+  client.publish(topic, buf, true, 0);
+
+  dtostrf(learned_cool_speed, 0, 2, buf);
+  snprintf(topic, sizeof(topic), "%slearned_cool_speed/get", thermostat_id);
+  client.publish(topic, buf, true, 0);
+
+  snprintf(buf, sizeof(buf), "%u", (unsigned)heat_cycles_count);
+  snprintf(topic, sizeof(topic), "%sheat_cycles/get", thermostat_id);
+  client.publish(topic, buf, true, 0);
+
+  snprintf(topic, sizeof(topic), "%straining_active/get", thermostat_id);
+  client.publish(topic, training_guided_active ? "ON" : "OFF", true, 0);
 
   if (WiFi.status() == WL_CONNECTED) {
     int rssi = WiFi.RSSI();
@@ -284,12 +369,13 @@ void publish_ha_discovery() {
     JsonArray pr_modes    = doc.createNestedArray("pr_modes");
     pr_modes.add("none");
     pr_modes.add("schedule");
+    pr_modes.add("eco");
     pr_modes.add("away");
     pr_modes.add("boost");
     doc["pr_mode_stat_t"] = "~preset/get";
     doc["pr_mode_cmd_t"]  = "~preset/set";
     doc["act_t"]          = "~action/get";
-    doc["curr_temp_t"]    = "~temperature/get";
+    doc["curr_temp_t"]    = "~temperature/effective";
     doc["curr_hum_t"]     = "~humidity/get";
     doc["temp_stat_t"]    = "~temperature/target";
     doc["temp_cmd_t"]     = "~temperature/set";
@@ -547,6 +633,27 @@ void publish_ha_discovery() {
     String payload;
     serializeJson(doc, payload);
     String discTopic = "homeassistant/sensor/" + devId + "_runtime_7d/config";
+    client.publish(discTopic.c_str(), payload.c_str(), true, 0);
+  }
+
+  // 11b. Sensore Duty Cycle Caldaia Oggi (%)
+  {
+    DynamicJsonDocument doc(512);
+    doc["~"]            = baseTopic;
+    doc["name"]         = "Duty Cycle Caldaia " + zoneName;
+    doc["obj_id"]       = "termostato_" + zoneSlug + "_duty_cycle";
+    doc["uniq_id"]      = devId + "_duty_cycle";
+    doc["stat_t"]       = "~runtime/duty_cycle";
+    doc["avty_t"]       = "~status";
+    doc["unit_of_meas"] = "%";
+    doc["icon"]         = "mdi:chart-donut";
+    JsonObject dev = doc.createNestedObject("dev");
+    JsonArray ids = dev.createNestedArray("ids");
+    ids.add(devId);
+
+    String payload;
+    serializeJson(doc, payload);
+    String discTopic = "homeassistant/sensor/" + devId + "_duty_cycle/config";
     client.publish(discTopic.c_str(), payload.c_str(), true, 0);
   }
 
@@ -1008,6 +1115,177 @@ void publish_ha_discovery() {
     client.publish(discTopic.c_str(), payload.c_str(), true, 0);
   }
 
+  // 33. Switch Anticipo Termico (Optimum Start)
+  {
+    DynamicJsonDocument doc(512);
+    doc["~"]        = baseTopic;
+    doc["name"]     = "Anticipo Termico " + zoneName;
+    doc["obj_id"]   = "termostato_" + zoneSlug + "_opt_start";
+    doc["uniq_id"]  = devId + "_opt_start";
+    doc["stat_t"]   = "~opt_start/get";
+    doc["cmd_t"]    = "~opt_start/set";
+    doc["avty_t"]   = "~status";
+    doc["icon"]     = "mdi:timer-sand";
+    JsonObject dev  = doc.createNestedObject("dev");
+    JsonArray ids   = dev.createNestedArray("ids");
+    ids.add(devId);
+
+    String payload;
+    serializeJson(doc, payload);
+    String discTopic = "homeassistant/switch/" + devId + "_opt_start/config";
+    client.publish(discTopic.c_str(), payload.c_str(), true, 0);
+  }
+
+  // 34. Number Velocita Riscaldamento (°C/h)
+  {
+    DynamicJsonDocument doc(512);
+    doc["~"]            = baseTopic;
+    doc["name"]         = "Velocita Riscaldamento " + zoneName;
+    doc["obj_id"]       = "termostato_" + zoneSlug + "_opt_start_speed";
+    doc["uniq_id"]      = devId + "_opt_start_speed";
+    doc["stat_t"]       = "~opt_start_speed/get";
+    doc["cmd_t"]        = "~opt_start_speed/set";
+    doc["avty_t"]       = "~status";
+    doc["min"]          = 0.5;
+    doc["max"]          = 5.0;
+    doc["step"]         = 0.1;
+    doc["unit_of_meas"] = "°C/h";
+    doc["mode"]         = "box";
+    doc["icon"]         = "mdi:speedometer";
+    JsonObject dev      = doc.createNestedObject("dev");
+    JsonArray ids       = dev.createNestedArray("ids");
+    ids.add(devId);
+
+    String payload;
+    serializeJson(doc, payload);
+    String discTopic = "homeassistant/number/" + devId + "_opt_start_speed/config";
+    client.publish(discTopic.c_str(), payload.c_str(), true, 0);
+  }
+
+  // 35. Sensore Temperatura Effettiva
+  {
+    DynamicJsonDocument doc(512);
+    doc["~"]            = baseTopic;
+    doc["name"]         = "Temp Effettiva " + zoneName;
+    doc["obj_id"]       = "termostato_" + zoneSlug + "_effective_temp";
+    doc["uniq_id"]      = devId + "_effective_temp";
+    doc["stat_t"]       = "~temperature/effective";
+    doc["avty_t"]       = "~status";
+    doc["unit_of_meas"] = "°C";
+    doc["dev_cla"]      = "temperature";
+    doc["icon"]         = "mdi:thermometer-check";
+    JsonObject dev      = doc.createNestedObject("dev");
+    JsonArray ids       = dev.createNestedArray("ids");
+    ids.add(devId);
+
+    String payload;
+    serializeJson(doc, payload);
+    String discTopic = "homeassistant/sensor/" + devId + "_effective_temp/config";
+    client.publish(discTopic.c_str(), payload.c_str(), true, 0);
+  }
+
+  // 36. Switch Auto-Apprendimento Termico
+  {
+    DynamicJsonDocument doc(512);
+    doc["~"]       = baseTopic;
+    doc["name"]    = "Auto-Apprendimento Termico " + zoneName;
+    doc["obj_id"]  = "termostato_" + zoneSlug + "_thermal_learning";
+    doc["uniq_id"] = devId + "_thermal_learning";
+    doc["stat_t"]  = "~thermal_learning/get";
+    doc["cmd_t"]   = "~thermal_learning/set";
+    doc["avty_t"]  = "~status";
+    doc["icon"]    = "mdi:brain";
+    JsonObject dev = doc.createNestedObject("dev");
+    JsonArray ids  = dev.createNestedArray("ids");
+    ids.add(devId);
+
+    String payload;
+    serializeJson(doc, payload);
+    String discTopic = "homeassistant/switch/" + devId + "_thermal_learning/config";
+    client.publish(discTopic.c_str(), payload.c_str(), true, 0);
+  }
+
+  // 37. Sensore Velocita Riscaldamento Appresa (°C/h)
+  {
+    DynamicJsonDocument doc(512);
+    doc["~"]            = baseTopic;
+    doc["name"]         = "Velocita Riscaldamento Appresa " + zoneName;
+    doc["obj_id"]       = "termostato_" + zoneSlug + "_learned_heat_speed";
+    doc["uniq_id"]      = devId + "_learned_heat_speed";
+    doc["stat_t"]       = "~learned_heat_speed/get";
+    doc["avty_t"]       = "~status";
+    doc["unit_of_meas"] = "°C/h";
+    doc["icon"]         = "mdi:trending-up";
+    JsonObject dev      = doc.createNestedObject("dev");
+    JsonArray ids       = dev.createNestedArray("ids");
+    ids.add(devId);
+
+    String payload;
+    serializeJson(doc, payload);
+    String discTopic = "homeassistant/sensor/" + devId + "_learned_heat_speed/config";
+    client.publish(discTopic.c_str(), payload.c_str(), true, 0);
+  }
+
+  // 38. Sensore Cicli Apprendimento Termico
+  {
+    DynamicJsonDocument doc(512);
+    doc["~"]       = baseTopic;
+    doc["name"]    = "Cicli Apprendimento Termico " + zoneName;
+    doc["obj_id"]  = "termostato_" + zoneSlug + "_heat_cycles";
+    doc["uniq_id"] = devId + "_heat_cycles";
+    doc["stat_t"]  = "~heat_cycles/get";
+    doc["avty_t"]  = "~status";
+    doc["icon"]    = "mdi:school";
+    JsonObject dev = doc.createNestedObject("dev");
+    JsonArray ids  = dev.createNestedArray("ids");
+    ids.add(devId);
+
+    String payload;
+    serializeJson(doc, payload);
+    String discTopic = "homeassistant/sensor/" + devId + "_heat_cycles/config";
+    client.publish(discTopic.c_str(), payload.c_str(), true, 0);
+  }
+
+  // 39. Pulsante Avvia Calibrazione Rapida 30m
+  {
+    DynamicJsonDocument doc(512);
+    doc["~"]       = baseTopic;
+    doc["name"]    = "Avvia Calibrazione Termica (30m) " + zoneName;
+    doc["obj_id"]  = "termostato_" + zoneSlug + "_start_training";
+    doc["uniq_id"] = devId + "_start_training";
+    doc["cmd_t"]   = "~training/start";
+    doc["avty_t"]  = "~status";
+    doc["icon"]    = "mdi:play-circle-outline";
+    JsonObject dev = doc.createNestedObject("dev");
+    JsonArray ids  = dev.createNestedArray("ids");
+    ids.add(devId);
+
+    String payload;
+    serializeJson(doc, payload);
+    String discTopic = "homeassistant/button/" + devId + "_start_training/config";
+    client.publish(discTopic.c_str(), payload.c_str(), true, 0);
+  }
+
+  // 40. Pulsante Ferma Calibrazione
+  {
+    DynamicJsonDocument doc(512);
+    doc["~"]       = baseTopic;
+    doc["name"]    = "Interrompi Calibrazione " + zoneName;
+    doc["obj_id"]  = "termostato_" + zoneSlug + "_stop_training";
+    doc["uniq_id"] = devId + "_stop_training";
+    doc["cmd_t"]   = "~training/stop";
+    doc["avty_t"]  = "~status";
+    doc["icon"]    = "mdi:stop-circle-outline";
+    JsonObject dev = doc.createNestedObject("dev");
+    JsonArray ids  = dev.createNestedArray("ids");
+    ids.add(devId);
+
+    String payload;
+    serializeJson(doc, payload);
+    String discTopic = "homeassistant/button/" + devId + "_stop_training/config";
+    client.publish(discTopic.c_str(), payload.c_str(), true, 0);
+  }
+
   publish_ha_state();
 }
 
@@ -1059,11 +1337,21 @@ void connect() {
     client.subscribe(thermostat_id + String("antifrost_th/set"));
     client.subscribe(thermostat_id + String("outdoor_temp/set"));
     client.subscribe(thermostat_id + String("ext_temp_en/set"));
+    client.subscribe(thermostat_id + String("opt_start/set"));
+    client.subscribe(thermostat_id + String("opt_start_speed/set"));
+    client.subscribe(thermostat_id + String("remote_sensor/mode/set"));
+    client.subscribe(thermostat_id + String("remote_sensor/topic/set"));
+    client.subscribe(thermostat_id + String("thermal_learning/set"));
+    client.subscribe(thermostat_id + String("training/start"));
+    client.subscribe(thermostat_id + String("training/stop"));
     if (ext_temp_enabled && ext_temp_topic[0] != '\0') {
       client.subscribe(ext_temp_topic);
     }
     if (ext_window_enabled && ext_window_topic[0] != '\0') {
       client.subscribe(ext_window_topic);
+    }
+    if (remote_sensor_mode != 0 && remote_sensor_topic[0] != '\0') {
+      client.subscribe(remote_sensor_topic);
     }
     Serial.println("Subscribed to " + String(thermostat_id) + "set");
 
@@ -1107,6 +1395,19 @@ void messageReceived(String &topic, String &payload) {
     }
     return;
   }
+
+  // Gestione Sensore Remoto Prioritario via MQTT
+  if (remote_sensor_mode != 0 && remote_sensor_topic[0] != '\0' && topic.equals(remote_sensor_topic)) {
+    float val = parse_temperature_payload(payload);
+    if (!isnan(val) && val >= -40.0f && val <= 70.0f) {
+      remote_temp_val = val;
+      remote_temp_last_ms = millis();
+      Serial.printf("Sensore Remoto aggiornato via MQTT: %.1f °C\n", val);
+      evaluate_crono(false);
+      publish_ha_state();
+    }
+    return;
+  }
   if (topic.substring(0, 5) == "scene") {
     // reserved
   }
@@ -1137,17 +1438,23 @@ void messageReceived(String &topic, String &payload) {
   snprintf(myConcatenation, sizeof(myConcatenation), "%spreset/set", thermostat_id);
   if (topic.equals(myConcatenation)) {
     if (payload.equals("schedule")) {
+      if (boost_active) cancel_boost();
       crono_enabled = true;
       current_preset_mode = "schedule";
     } else if (payload.equals("away")) {
+      if (boost_active) cancel_boost();
       crono_enabled = false;
       current_preset_mode = "away";
-      temp_setpoint = 18.0f;
-    } else if (payload.equals("boost")) {
+      temp_setpoint = away_temp;
+    } else if (payload.equals("eco")) {
+      if (boost_active) cancel_boost();
       crono_enabled = false;
-      current_preset_mode = "boost";
-      temp_setpoint = 23.0f;
+      current_preset_mode = "eco";
+      temp_setpoint = eco_temp;
+    } else if (payload.equals("boost")) {
+      trigger_boost(boost_duration_min, boost_temp);
     } else {
+      if (boost_active) cancel_boost();
       crono_enabled = false;
       current_preset_mode = "none";
     }
@@ -1277,6 +1584,64 @@ void messageReceived(String &topic, String &payload) {
     save_json_config();
     publish_ha_state();
     play_beep(2600, 25);
+  }
+  snprintf(myConcatenation, sizeof(myConcatenation), "%sopt_start/set", thermostat_id);
+  if (topic.equals(myConcatenation)) {
+    opt_start_enabled = (payload == "ON" || payload == "1" || payload == "true");
+    save_json_config();
+    evaluate_crono(true);
+    publish_ha_state();
+    play_beep(2600, 25);
+  }
+  snprintf(myConcatenation, sizeof(myConcatenation), "%sopt_start_speed/set", thermostat_id);
+  if (topic.equals(myConcatenation)) {
+    float spd = payload.toFloat();
+    if (!isnan(spd) && spd >= 0.5f && spd <= 5.0f) {
+      opt_start_speed = round(spd * 10.0f) / 10.0f;
+      save_json_config();
+      evaluate_crono(true);
+      publish_ha_state();
+      play_beep(2600, 25);
+    }
+  }
+  snprintf(myConcatenation, sizeof(myConcatenation), "%sremote_sensor/mode/set", thermostat_id);
+  if (topic.equals(myConcatenation)) {
+    int rmode = payload.toInt();
+    if (rmode >= 0 && rmode <= 2) {
+      remote_sensor_mode = (uint8_t)rmode;
+      save_json_config();
+      evaluate_crono(true);
+      publish_ha_state();
+      play_beep(2600, 25);
+    }
+  }
+  snprintf(myConcatenation, sizeof(myConcatenation), "%sremote_sensor/topic/set", thermostat_id);
+  if (topic.equals(myConcatenation)) {
+    strncpy(remote_sensor_topic, payload.c_str(), sizeof(remote_sensor_topic) - 1);
+    remote_sensor_topic[sizeof(remote_sensor_topic) - 1] = '\0';
+    if (client.connected() && remote_sensor_mode != 0 && remote_sensor_topic[0] != '\0') {
+      client.subscribe(remote_sensor_topic);
+    }
+    save_json_config();
+    publish_ha_state();
+    play_beep(2600, 25);
+  }
+  snprintf(myConcatenation, sizeof(myConcatenation), "%sthermal_learning/set", thermostat_id);
+  if (topic.equals(myConcatenation)) {
+    thermal_learning_enabled = (payload == "ON" || payload == "1" || payload == "true");
+    save_json_config();
+    publish_ha_state();
+    play_beep(2600, 25);
+  }
+  snprintf(myConcatenation, sizeof(myConcatenation), "%straining/start", thermostat_id);
+  if (topic.equals(myConcatenation)) {
+    uint16_t dur = payload.toInt();
+    if (dur < 10 || dur > 120) dur = 30;
+    start_thermal_training(dur);
+  }
+  snprintf(myConcatenation, sizeof(myConcatenation), "%straining/stop", thermostat_id);
+  if (topic.equals(myConcatenation)) {
+    cancel_or_finish_thermal_training(false);
   }
   snprintf(myConcatenation, sizeof(myConcatenation), "%sreboot/set", thermostat_id);
   if (topic.equals(myConcatenation)) {

@@ -102,6 +102,15 @@ All'avvio e ad ogni riconnessione, il termostato pubblica i descrittori di Auto-
 | `button.termostato_<stanza>_clean_screen` | Pulsante | Blocco schermo 30 secondi per pulizia |
 | `sensor.termostato_<stanza>_ore_oggi` | Sensore | Ore di lavoro caldaia oggi |
 | `sensor.termostato_<stanza>_ore_7gg` | Sensore | Ore di lavoro caldaia ultimi 7 giorni |
+| `sensor.termostato_<stanza>_duty_cycle` | Sensore | Percentuale di funzionamento caldaia oggi (%) |
+| `switch.termostato_<stanza>_opt_start` | Switch | Anticipo termico intelligente (Optimum Start) |
+| `number.termostato_<stanza>_opt_start_speed` | Cursore | Velocità riscaldamento impianto (0.5..5.0 °C/h) |
+| `sensor.termostato_<stanza>_effective_temp` | Sensore | Temperatura di regolazione effettiva (°C) |
+| `switch.termostato_<stanza>_thermal_learning` | Switch | Auto-apprendimento continuo inerzia termica edificio |
+| `sensor.termostato_<stanza>_learned_heat_speed` | Sensore | Velocità di riscaldamento appresa (°C/h) |
+| `sensor.termostato_<stanza>_heat_cycles` | Sensore | Numero di cicli di apprendimento completati |
+| `button.termostato_<stanza>_start_training` | Pulsante | Avvio sessione di calibrazione rapida (30 min) |
+| `button.termostato_<stanza>_stop_training` | Pulsante | Interruzione sessione di calibrazione rapida |
 | `sensor.termostato_<stanza>_temperatura` | Sensore | Temperatura ambiente (°C) |
 | `sensor.termostato_<stanza>_umidita` | Sensore | Umidità relativa (%) |
 | `sensor.termostato_<stanza>_pressione` | Sensore | Pressione barometrica (hPa) |

@@ -495,6 +495,68 @@ def build_pdf(filename="Manuale_Istruzioni_Termostato_Smart.pdf"):
         "In allarme la caldaia parte a potenza massima e la spia <code>GEL</code> si illumina di rosso acceso.",
         style_body
     ))
+    story.append(Spacer(1, 4))
+
+    # 5.7 Climatizzazione Estate / Inverno
+    story.append(Paragraph("5.7 Climatizzazione Estate / Inverno (Heat &amp; Cool)", style_h2))
+    story.append(Paragraph(
+        "Il dispositivo supporta la commutazione a caldo o freddo. In modalità <b>Raffrescamento (Cool)</b>, la logica del relè viene invertita "
+        "in modo che l'impianto di climatizzazione o fancoil si accenda quando la temperatura ambiente supera il setpoint, con isteresi dinamica dedicata.",
+        style_body
+    ))
+    story.append(Spacer(1, 4))
+
+    # 5.8 Anticipo Termico Intelligente (Optimum Start)
+    story.append(Paragraph("5.8 Anticipo Termico Intelligente (Optimum Start)", style_h2))
+    story.append(Paragraph(
+        "Con il cronotermostato tradizionale, se imposti 20 °C alle 07:00 del mattino, la caldaia parte alle 07:00 trovando la casa fredda. "
+        "L'<b>Optimum Start</b> calcola in anticipo (fino a 120 minuti prima del cambio fascia) il tempo esatto necessario per colmare il dislivello di temperatura, "
+        "accendendo la caldaia prima dell'orario stabilito. Sul display la spia <code>CRN</code> si illumina in azzurro cielo e mostra <code>CRN-OPT</code>.",
+        style_body
+    ))
+    story.append(Spacer(1, 4))
+
+    # 5.9 Auto-Apprendimento Continuo (EMA) & Training Guidato
+    story.append(Paragraph("5.9 Modello Termico dell'Edificio: Auto-Apprendimento Continuo &amp; Training Guidato (30m)", style_h2))
+    story.append(Paragraph(
+        "Ogni casa ha una propria inerzia termica e dispersione verso l'esterno. Il termostato implementa due modalità sinergiche di acquisizione:<br/>"
+        "&bull; <b>Auto-Apprendimento Continuo Passivo:</b> ad ogni accensione reale della caldaia superiore a 8 minuti, misura il delta termico effettivo "
+        "e aggiorna un filtro a Media Mobile Esponenziale (EMA, &alpha;=0.25). La velocità appresa in &deg;C/h si perfeziona giorno dopo giorno senza alcun intervento dell'utente.<br/>"
+        "&bull; <b>Calibrazione Rapida Guidata (30 min):</b> con un solo tocco da Web UI o Home Assistant viene avviato un test dedicato di 30 minuti a potenza fissa. "
+        "Sul display compare il countdown discreto <code>TRN 29m</code> (senza ingombrare la schermata) e al termine il sistema memorizza la reale velocità di risposta termica dell'edificio.",
+        style_body
+    ))
+    story.append(Spacer(1, 4))
+
+    # 5.10 Preset Rapidi
+    story.append(Paragraph("5.10 Preset Avanzati (Eco, Away, Boost Temporizzato)", style_h2))
+    story.append(Paragraph(
+        "Sono disponibili preset termici a un tocco:<br/>"
+        "&bull; <b>Eco (16.0 &deg;C):</b> temperatura di risparmio per brevi assenze.<br/>"
+        "&bull; <b>Away (15.0 &deg;C):</b> modalità vacanza per lunghe assenze.<br/>"
+        "&bull; <b>Boost Temporizzato (22.5 &deg;C per 60 min):</b> spinta termica rapida (es. rientro a casa o doccia) con ripristino automatico "
+        "dello stato precedente allo scadere del tempo. Sul display l'etichetta del setpoint mostra il tempo residuo <code>BST 55m</code> senza creare confusione.",
+        style_body
+    ))
+    story.append(Spacer(1, 4))
+
+    # 5.11 Sensore Remoto Prioritario & Media Multi-Sensore
+    story.append(Paragraph("5.11 Sensore Remoto Prioritario / Media Multi-Sensore con Fallback", style_h2))
+    story.append(Paragraph(
+        "Se il termostato si trova vicino a una fonte di calore o in un corridoio poco rappresentativo, è possibile collegare via MQTT un sensore termico remoto "
+        "(es. Zigbee / BLE in camera da letto). Il sistema supporta 3 modalità: <i>Solo Locale</i>, <i>Solo Remoto</i>, o <i>Media 50/50</i>. "
+        "Se il sensore remoto non trasmette per oltre 30 minuti, scatta automaticamente il <b>fallback di sicurezza sul sensore BME280 locale</b>.",
+        style_body
+    ))
+    story.append(Spacer(1, 4))
+
+    # 5.12 Statistiche Consumi & Duty Cycle
+    story.append(Paragraph("5.12 Statistiche Consumi &amp; Duty Cycle Caldaia", style_h2))
+    story.append(Paragraph(
+        "Nella Pagina 2 del display e nella Web UI è visibile il <b>Duty Cycle odierno (%)</b> e il tempo di funzionamento totale in ore e minuti. "
+        "Permette di monitorare l'efficienza energetica della caldaia confrontandola con lo storico degli ultimi 7 giorni.",
+        style_body
+    ))
     story.append(Spacer(1, 8))
 
     # =========================================================================
@@ -588,6 +650,51 @@ def build_pdf(filename="Manuale_Istruzioni_Termostato_Smart.pdf"):
             Paragraph("<code>sensor.termostato_&lt;stanza&gt;_wifi_signal</code>", style_table_cell),
             Paragraph("Sensore %", style_table_cell),
             Paragraph("Intensità percentuale segnale Wi-Fi con RSSI in dBm.", style_table_cell)
+        ],
+        [
+            Paragraph("<code>sensor.termostato_&lt;stanza&gt;_duty_cycle</code>", style_table_cell),
+            Paragraph("Sensore %", style_table_cell),
+            Paragraph("Percentuale di accensione caldaia rispetto alle ore trascorse oggi (Duty Cycle).", style_table_cell)
+        ],
+        [
+            Paragraph("<code>switch.termostato_&lt;stanza&gt;_opt_start</code>", style_table_cell),
+            Paragraph("Switch", style_table_cell),
+            Paragraph("Abilita/disabilita l'anticipo termico Optimum Start (spia <code>CRN-OPT</code> azzurra).", style_table_cell)
+        ],
+        [
+            Paragraph("<code>number.termostato_&lt;stanza&gt;_opt_start_speed</code>", style_table_cell),
+            Paragraph("Cursore", style_table_cell),
+            Paragraph("Velocità di riscaldamento impianto (0.5..5.0 &deg;C/h) usata per l'anticipo.", style_table_cell)
+        ],
+        [
+            Paragraph("<code>sensor.termostato_&lt;stanza&gt;_effective_temp</code>", style_table_cell),
+            Paragraph("Sensore &deg;C", style_table_cell),
+            Paragraph("Temperatura di regolazione effettiva (locale, remota o media 50/50).", style_table_cell)
+        ],
+        [
+            Paragraph("<code>switch.termostato_&lt;stanza&gt;_thermal_learning</code>", style_table_cell),
+            Paragraph("Switch", style_table_cell),
+            Paragraph("Attiva l'auto-apprendimento continuo (EMA) dell'inerzia termica della casa.", style_table_cell)
+        ],
+        [
+            Paragraph("<code>sensor.termostato_&lt;stanza&gt;_learned_heat_speed</code>", style_table_cell),
+            Paragraph("Sensore &deg;C/h", style_table_cell),
+            Paragraph("Velocità di riscaldamento calibrata e appresa dall'edificio in tempo reale.", style_table_cell)
+        ],
+        [
+            Paragraph("<code>sensor.termostato_&lt;stanza&gt;_heat_cycles</code>", style_table_cell),
+            Paragraph("Sensore Conteggio", style_table_cell),
+            Paragraph("Numero di cicli termici reali analizzati dall'algoritmo di apprendimento.", style_table_cell)
+        ],
+        [
+            Paragraph("<code>button.termostato_&lt;stanza&gt;_start_training</code>", style_table_cell),
+            Paragraph("Pulsante", style_table_cell),
+            Paragraph("Avvia sessione di calibrazione rapida (test termico guidato 30 minuti).", style_table_cell)
+        ],
+        [
+            Paragraph("<code>button.termostato_&lt;stanza&gt;_stop_training</code>", style_table_cell),
+            Paragraph("Pulsante", style_table_cell),
+            Paragraph("Interrompe la calibrazione e ripristina la modalità termostato precedente.", style_table_cell)
         ]
     ]
     t_ha = Table(ha_entities, colWidths=[4.9 * cm, 2.0 * cm, A4[0] - 3.0 * cm - 6.9 * cm])

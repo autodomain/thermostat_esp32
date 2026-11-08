@@ -146,6 +146,8 @@ extern gslc_tsElemRef* m_pElemOutTxt_Weather;
 extern gslc_tsElemRef* m_pElemOutTxt_SetpointLbl;
 extern gslc_tsElemRef* m_pElemBox_StatusBar;
 extern gslc_tsElemRef* m_pElemBox_WifiBars;
+extern gslc_tsElemRef* m_pElemOutTxt_IndoorLbl;
+extern gslc_tsElemRef* m_pElemOutTxt_GraphInfo;
 //<Extern_References !End!>
 
 // Define debug message function
@@ -336,11 +338,14 @@ void InitGUIslice_gen()
   m_pElemOutTxt_SetpointLbl = pElemRef;
   
   // Create E_ELEM_TEXT32 text label
-  pElemRef = gslc_ElemCreateTxt(&m_gui,E_ELEM_TEXT32,E_PG_MAIN,(gslc_tsRect){69,105,37,10},
-    (char*)"INDOOR",0,E_BUILTIN5X8);
+  static char m_sDisplayText32[12] = "INDOOR";
+  pElemRef = gslc_ElemCreateTxt(&m_gui,E_ELEM_TEXT32,E_PG_MAIN,(gslc_tsRect){65,105,48,10},
+    (char*)m_sDisplayText32,12,E_BUILTIN5X8);
+  gslc_ElemSetTxtAlign(&m_gui,pElemRef,GSLC_ALIGN_MID_MID);
   gslc_ElemSetTxtCol(&m_gui,pElemRef,((gslc_tsColor){0,136,255}));
   gslc_ElemSetCol(&m_gui,pElemRef,GSLC_COL_GRAY,((gslc_tsColor){0,75,153}),((gslc_tsColor){0,75,153}));
   gslc_ElemSetTxtEnc(&m_gui,pElemRef,GSLC_TXT_ENC_UTF8);
+  m_pElemOutTxt_IndoorLbl = pElemRef;
   
   // Create radio button E_ELEM_RADIO4
   pElemRef = gslc_ElemXCheckboxCreate(&m_gui,E_ELEM_RADIO4,E_PG_MAIN,&m_asXRadio4,
@@ -477,9 +482,11 @@ void InitGUIslice_gen()
   m_pElemGraph_Temperature = pElemRef;
   
   // Create E_ELEM_TEXT34 text label
-  pElemRef = gslc_ElemCreateTxt(&m_gui,E_ELEM_TEXT34,E_PG2,(gslc_tsRect){10,105,103,10},
-    (char*)"Temperature Graph",0,E_BUILTIN5X8);
+  static char m_sDisplayText34[36] = "Grafico Temperatura";
+  pElemRef = gslc_ElemCreateTxt(&m_gui,E_ELEM_TEXT34,E_PG2,(gslc_tsRect){10,103,220,12},
+    (char*)m_sDisplayText34,36,E_BUILTIN5X8);
   gslc_ElemSetCol(&m_gui,pElemRef,GSLC_COL_GRAY,((gslc_tsColor){0,65,128}),GSLC_COL_BLACK);
+  m_pElemOutTxt_GraphInfo = pElemRef;
   
   // Create E_ELEM_TEXT41 text label
   pElemRef = gslc_ElemCreateTxt(&m_gui,E_ELEM_TEXT41,E_PG2,(gslc_tsRect){18,13,115,10},

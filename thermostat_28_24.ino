@@ -246,6 +246,57 @@ bool ext_temp_enabled = true;
 char ext_temp_topic[100] = "home/outside/temperature";
 float ext_temp_val = NAN;
 
+// 10. Anticipo Termico Intelligente (Optimum Start)
+bool opt_start_enabled = true;
+float opt_start_speed = 1.5f; // °C per ora (velocita riscaldamento ambiente)
+bool opt_start_active = false;
+
+// 11. Modalita Preset Avanzate & Boost Temporizzato
+bool boost_active = false;
+unsigned long boost_end_ms = 0;
+int boost_prev_stato = 1;
+float boost_prev_sp = 20.0f;
+bool boost_prev_crono = false;
+String boost_prev_preset = "none";
+uint16_t boost_duration_min = 60;
+float boost_temp = 22.5f;
+float eco_temp = 16.0f;
+float away_temp = 15.0f;
+
+// 12. Sensore Remoto Prioritario / Media Multi-Sensore
+// 0 = Locale BME280, 1 = Remoto Esclusivo MQTT, 2 = Media 50/50 Locale + Remoto
+uint8_t remote_sensor_mode = 0;
+char remote_sensor_topic[100] = "home/bedroom/temperature";
+float remote_temp_val = NAN;
+unsigned long remote_temp_last_ms = 0;
+
+float get_effective_temperature();
+void trigger_boost(uint16_t duration_minutes = 60, float target_temp = 22.5f);
+void cancel_boost();
+
+// 13. Modello Termico & Auto-Apprendimento Inerzia Edificio
+bool thermal_learning_enabled = true;
+float learned_heat_speed = 1.50f;     // °C/h appreso per il riscaldamento
+float learned_cool_speed = 1.20f;     // °C/h appreso per il raffrescamento
+uint16_t heat_cycles_count = 0;      // Numero cicli di apprendimento completati
+uint16_t cool_cycles_count = 0;
+
+bool cycle_tracking_active = false;
+int cycle_tracking_mode = 0;
+float cycle_start_temp = 0.0f;
+unsigned long cycle_start_ms = 0;
+
+bool training_guided_active = false;
+uint16_t training_guided_duration_min = 30;
+float training_guided_start_temp = 0.0f;
+unsigned long training_guided_end_ms = 0;
+int training_prev_stato = 1;
+float training_prev_sp = 20.0f;
+
+void start_thermal_training(uint16_t duration_minutes = 30);
+void cancel_or_finish_thermal_training(bool completed);
+void apply_relay_state(bool on_state);
+
 void trigger_child_lock(uint32_t seconds = 30);
 void trigger_pump_test(uint32_t seconds = 60);
 
@@ -386,6 +437,8 @@ gslc_tsElemRef* m_pElemOutTxt_Weather = NULL;
 gslc_tsElemRef* m_pElemOutTxt_SetpointLbl = NULL;
 gslc_tsElemRef* m_pElemBox_StatusBar = NULL;
 gslc_tsElemRef* m_pElemBox_WifiBars  = NULL;
+gslc_tsElemRef* m_pElemOutTxt_IndoorLbl = NULL;
+gslc_tsElemRef* m_pElemOutTxt_GraphInfo = NULL;
 //<Save_References !End!>
 
 // Define debug message function
@@ -624,6 +677,19 @@ void save_json_config() {
   json["ext_win_top"]   = ext_window_topic;
   json["ext_temp_en"]   = ext_temp_enabled ? 1 : 0;
   json["ext_temp_top"]  = ext_temp_topic;
+  json["opt_en"]        = opt_start_enabled ? 1 : 0;
+  json["opt_spd"]       = round(opt_start_speed * 10.0f) / 10.0f;
+  json["rem_mode"]      = remote_sensor_mode;
+  json["rem_top"]       = remote_sensor_topic;
+  json["eco_sp"]        = round(eco_temp * 10.0f) / 10.0f;
+  json["away_sp"]       = round(away_temp * 10.0f) / 10.0f;
+  json["bst_sp"]        = round(boost_temp * 10.0f) / 10.0f;
+  json["bst_dur"]       = boost_duration_min;
+  json["therm_en"]      = thermal_learning_enabled ? 1 : 0;
+  json["l_heat_spd"]    = round(learned_heat_speed * 100.0f) / 100.0f;
+  json["l_cool_spd"]    = round(learned_cool_speed * 100.0f) / 100.0f;
+  json["h_cycles"]      = heat_cycles_count;
+  json["c_cycles"]      = cool_cycles_count;
 
   JsonArray sched = json.createNestedArray("sched");
   for (int d = 0; d < 2; d++) {
@@ -947,9 +1013,15 @@ void get_temp_print(){
         averageValueH.push(bme.readHumidity());
       }
     } else {
-      gslc_ElemSetTxtStr(&m_gui,m_pElemOutTxt5,"--.-");
+      float eff_t = get_effective_temperature();
+      if (!isnan(eff_t)) {
+        dtostrf(eff_t, 4, 1, buffer);
+        gslc_ElemSetTxtStr(&m_gui,m_pElemOutTxt5,buffer);
+      } else {
+        gslc_ElemSetTxtStr(&m_gui,m_pElemOutTxt5,"--.-");
+      }
       gslc_ElemSetTxtStr(&m_gui,m_pElemOutTxt6,"--.-");
-      if (m_pElemOutTxt_Weather != NULL) gslc_ElemSetTxtStr(&m_gui,m_pElemOutTxt_Weather,"Sensore non rilevato");
+      if (m_pElemOutTxt_Weather != NULL) gslc_ElemSetTxtStr(&m_gui,m_pElemOutTxt_Weather,"Sensore locale assente");
       return;
     }
   }
@@ -963,12 +1035,29 @@ void get_temp_print(){
 
   if (!isnan(rawT) && rawT > -40.0f && rawT < 85.0f) {
     averageValueT.push(rawT + temperature_offset);
-    dtostrf(averageValueT.average(), 4, 1, buffer);
+    float eff_t = get_effective_temperature();
+    dtostrf(eff_t, 4, 1, buffer);
     gslc_ElemSetTxtStr(&m_gui,m_pElemOutTxt5,buffer);
+
+    if (m_pElemOutTxt_IndoorLbl != NULL) {
+      bool remote_valid = (!isnan(remote_temp_val) && (millis() - remote_temp_last_ms < 1800000UL));
+      if (remote_sensor_mode == 1 && remote_valid) {
+        gslc_ElemSetTxtStr(&m_gui, m_pElemOutTxt_IndoorLbl, "REMOTE");
+      } else if (remote_sensor_mode == 2 && remote_valid) {
+        gslc_ElemSetTxtStr(&m_gui, m_pElemOutTxt_IndoorLbl, "MEDIA");
+      } else {
+        gslc_ElemSetTxtStr(&m_gui, m_pElemOutTxt_IndoorLbl, "INDOOR");
+      }
+    }
 
     if (client.connected()) {
       char myConcatenation[80];
       snprintf(myConcatenation, sizeof(myConcatenation), "%stemperature/get", thermostat_id);
+      char bmeBuf[10];
+      dtostrf(averageValueT.average(), 0, 1, bmeBuf);
+      client.publish(myConcatenation, bmeBuf, true, 0);
+
+      snprintf(myConcatenation, sizeof(myConcatenation), "%stemperature/effective", thermostat_id);
       client.publish(myConcatenation, buffer, true, 0);
     }
   }
@@ -1099,8 +1188,10 @@ bool CbDrawStatusBar(void* pvGui, void* pvElemRef, gslc_teRedrawType eRedraw) {
   gslc_tsElemRef* pElemRef = (gslc_tsElemRef*)pvElemRef;
 
   uint8_t cur_state[8];
-  // 0: CRN (Crono settimanale)
-  cur_state[0] = crono_enabled ? 1 : 0;
+  // 0: CRN (Crono settimanale / Optimum Start / Boost)
+  if (boost_active) cur_state[0] = 3;
+  else if (opt_start_active) cur_state[0] = 2;
+  else cur_state[0] = crono_enabled ? 1 : 0;
   // 1: GEL (Protezione antigelo)
   cur_state[1] = antifrost_active ? 2 : (antifrost_enabled ? 1 : 0);
   // 2: WIN (Rilevamento finestre aperte)
@@ -1134,7 +1225,9 @@ bool CbDrawStatusBar(void* pvGui, void* pvElemRef, gslc_teRedrawType eRedraw) {
 
     switch (i) {
       case 0: // CRN
-        if (cur_state[0] == 1) { bg = {22, 163, 74}; fr = {74, 222, 128}; tx = col_txt_white; }
+        if (cur_state[0] == 3) { bg = {234, 88, 12}; fr = {253, 186, 116}; tx = col_txt_white; }
+        else if (cur_state[0] == 2) { bg = {2, 132, 199}; fr = {56, 189, 248}; tx = col_txt_white; }
+        else if (cur_state[0] == 1) { bg = {22, 163, 74}; fr = {74, 222, 128}; tx = col_txt_white; }
         break;
       case 1: // GEL
         if (cur_state[1] == 2) { bg = {220, 38, 38}; fr = {248, 113, 113}; tx = col_txt_white; }
@@ -1182,7 +1275,9 @@ void update_indicator_spie(bool force_redraw) {
   }
 
   uint8_t cur_state[8];
-  cur_state[0] = crono_enabled ? 1 : 0;
+  if (boost_active) cur_state[0] = 3;
+  else if (opt_start_active) cur_state[0] = 2;
+  else cur_state[0] = crono_enabled ? 1 : 0;
   cur_state[1] = antifrost_active ? 2 : (antifrost_enabled ? 1 : 0);
   cur_state[2] = open_window_active ? 2 : ((open_window_enabled || ext_window_enabled) ? 1 : 0);
   cur_state[3] = pump_test_active ? 2 : (pump_protection_enabled ? 1 : 0);
@@ -1352,6 +1447,195 @@ void track_open_window(float current_t) {
   }
 }
 
+float get_effective_temperature() {
+  float local_t = bme_ok ? averageValueT.average() : NAN;
+  if (local_t < -40.0f || local_t > 85.0f) local_t = NAN;
+  bool remote_valid = (!isnan(remote_temp_val) && (millis() - remote_temp_last_ms < 1800000UL)); // valido se ricevuto entro 30 min
+
+  if (isnan(local_t) && remote_valid) {
+    return remote_temp_val;
+  }
+  if (remote_sensor_mode == 0 || !remote_valid) {
+    return local_t;
+  }
+  if (remote_sensor_mode == 1) {
+    return remote_temp_val;
+  }
+  if (remote_sensor_mode == 2) {
+    if (isnan(local_t)) return remote_temp_val;
+    return (local_t + remote_temp_val) / 2.0f;
+  }
+  return local_t;
+}
+
+void trigger_boost(uint16_t duration_minutes, float target_temp) {
+  if (!boost_active) {
+    boost_prev_stato = stato;
+    boost_prev_sp = temp_setpoint;
+    boost_prev_crono = crono_enabled;
+    boost_prev_preset = current_preset_mode;
+  }
+  boost_active = true;
+  boost_duration_min = duration_minutes;
+  boost_temp = target_temp;
+  boost_end_ms = millis() + (unsigned long)boost_duration_min * 60000UL;
+  crono_enabled = false;
+  current_preset_mode = "boost";
+  stato = 1;
+  temp_setpoint = boost_temp;
+  set_thermostat_mode(1);
+
+  char bstBuf[16];
+  snprintf(bstBuf, sizeof(bstBuf), "BST %um", (unsigned)boost_duration_min);
+  if (m_pElemOutTxt_SetpointLbl != NULL) {
+    gslc_ElemSetTxtStr(&m_gui, m_pElemOutTxt_SetpointLbl, bstBuf);
+  }
+  char spBuf[10];
+  dtostrf(temp_setpoint, 0, 1, spBuf);
+  gslc_ElemSetTxtStr(&m_gui, m_pElemOutTxt_Temp_Setpoint, spBuf);
+
+  save_state_eeprom();
+  publish_ha_state();
+  play_beep(2900, 40);
+  Serial.printf("Boost attivato per %u min a %.1f °C\n", (unsigned)boost_duration_min, boost_temp);
+}
+
+void cancel_boost() {
+  if (!boost_active) return;
+  boost_active = false;
+  stato = boost_prev_stato;
+  temp_setpoint = boost_prev_sp;
+  crono_enabled = boost_prev_crono;
+  current_preset_mode = boost_prev_preset;
+  set_thermostat_mode(stato);
+  evaluate_crono(true);
+  save_state_eeprom();
+  publish_ha_state();
+  Serial.println("Boost disattivato, ripristinato stato precedente");
+}
+
+void apply_relay_state(bool on_state) {
+  int prev = digitalRead(rele_pin);
+  int next = on_state ? HIGH : LOW;
+  digitalWrite(rele_pin, next);
+
+  if (prev != next) {
+    unsigned long now = millis();
+    float eff_t = get_effective_temperature();
+
+    if (next == HIGH) {
+      last_relay_active_time = now;
+      if (!cycle_tracking_active && !isnan(eff_t)) {
+        cycle_tracking_active = true;
+        cycle_tracking_mode = stato;
+        cycle_start_temp = eff_t;
+        cycle_start_ms = now;
+      }
+    } else {
+      if (cycle_tracking_active && thermal_learning_enabled && !isnan(eff_t)) {
+        unsigned long dur_ms = now - cycle_start_ms;
+        // Valuta solo cicli termici significativi (almeno 8 min, max 3 ore)
+        if (dur_ms >= 480000UL && dur_ms <= 10800000UL) {
+          float hours = (float)dur_ms / 3600000.0f;
+          if (cycle_tracking_mode == 1) { // Riscaldamento
+            float delta_t = eff_t - cycle_start_temp;
+            if (delta_t >= 0.25f) {
+              float measured_spd = delta_t / hours;
+              if (measured_spd >= 0.3f && measured_spd <= 6.0f) {
+                if (heat_cycles_count == 0) {
+                  learned_heat_speed = measured_spd;
+                } else {
+                  learned_heat_speed = 0.25f * measured_spd + 0.75f * learned_heat_speed;
+                }
+                learned_heat_speed = round(learned_heat_speed * 100.0f) / 100.0f;
+                heat_cycles_count++;
+                opt_start_speed = constrain(learned_heat_speed, 0.5f, 5.0f);
+                save_json_config();
+                publish_ha_state();
+                Serial.printf("[AUTO-LEARNING] Riscaldamento Ciclo #%u: Delta=%.2f C in %.1f min -> Misurato=%.2f C/h | Appreso EMA=%.2f C/h\n",
+                              heat_cycles_count, delta_t, dur_ms / 60000.0f, measured_spd, learned_heat_speed);
+              }
+            }
+          } else if (cycle_tracking_mode == 2) { // Raffrescamento
+            float delta_t = cycle_start_temp - eff_t;
+            if (delta_t >= 0.25f) {
+              float measured_spd = delta_t / hours;
+              if (measured_spd >= 0.3f && measured_spd <= 6.0f) {
+                if (cool_cycles_count == 0) {
+                  learned_cool_speed = measured_spd;
+                } else {
+                  learned_cool_speed = 0.25f * measured_spd + 0.75f * learned_cool_speed;
+                }
+                learned_cool_speed = round(learned_cool_speed * 100.0f) / 100.0f;
+                cool_cycles_count++;
+                save_json_config();
+                publish_ha_state();
+                Serial.printf("[AUTO-LEARNING] Raffrescamento Ciclo #%u: Delta=%.2f C in %.1f min -> Misurato=%.2f C/h | Appreso EMA=%.2f C/h\n",
+                              cool_cycles_count, delta_t, dur_ms / 60000.0f, measured_spd, learned_cool_speed);
+              }
+            }
+          }
+        }
+      }
+      cycle_tracking_active = false;
+    }
+  }
+}
+
+void start_thermal_training(uint16_t duration_minutes) {
+  training_guided_active = true;
+  training_guided_duration_min = duration_minutes;
+  training_guided_start_temp = get_effective_temperature();
+  training_guided_end_ms = millis() + (unsigned long)duration_minutes * 60000UL;
+  training_prev_stato = stato;
+  training_prev_sp = temp_setpoint;
+
+  stato = 1;
+  temp_setpoint = 28.0f;
+  set_thermostat_mode(1);
+  apply_relay_state(true);
+
+  if (m_pElemOutTxt_SetpointLbl != NULL) {
+    char tBuf[16];
+    snprintf(tBuf, sizeof(tBuf), "TRN %um", (unsigned)duration_minutes);
+    gslc_ElemSetTxtStr(&m_gui, m_pElemOutTxt_SetpointLbl, tBuf);
+  }
+  publish_ha_state();
+  play_beep(2900, 50);
+  Serial.printf("[TRAINING] Avviato test termico per %u min da T=%.2f C\n", duration_minutes, training_guided_start_temp);
+}
+
+void cancel_or_finish_thermal_training(bool completed) {
+  if (!training_guided_active) return;
+  training_guided_active = false;
+  float end_t = get_effective_temperature();
+
+  if (completed && !isnan(end_t) && !isnan(training_guided_start_temp)) {
+    float delta_t = end_t - training_guided_start_temp;
+    if (delta_t >= 0.2f) {
+      float hours = (float)training_guided_duration_min / 60.0f;
+      float measured_spd = delta_t / hours;
+      if (measured_spd >= 0.3f && measured_spd <= 6.0f) {
+        learned_heat_speed = round(measured_spd * 100.0f) / 100.0f;
+        opt_start_speed = constrain(learned_heat_speed, 0.5f, 5.0f);
+        heat_cycles_count++;
+        save_json_config();
+        Serial.printf("[TRAINING] COMPLETATO! Delta=%.2f C in %u min -> Nuova velocita riscaldamento: %.2f C/h\n",
+                      delta_t, training_guided_duration_min, learned_heat_speed);
+        play_beep(3200, 80);
+      }
+    }
+  }
+
+  stato = training_prev_stato;
+  temp_setpoint = training_prev_sp;
+  set_thermostat_mode(stato);
+  apply_relay_state(false);
+  evaluate_crono(true);
+  publish_ha_state();
+  Serial.println("[TRAINING] Terminato e ripristinato stato precedente.");
+}
+
 void update_runtime_counter() {
   unsigned long now = millis();
   if (last_runtime_check_ms == 0) {
@@ -1370,6 +1654,7 @@ void update_runtime_counter() {
 
   // Controlla cambio giorno tramite struct tm NTP
   struct tm timeinfo;
+  float duty_cycle_today = 0.0f;
   if (getLocalTime(&timeinfo, 10)) {
     if (current_day_of_year == -1) {
       current_day_of_year = timeinfo.tm_yday;
@@ -1384,6 +1669,25 @@ void update_runtime_counter() {
       save_json_config();
       Serial.println("Nuovo giorno: aggiornato storico ore caldaia 7gg");
     }
+
+    uint32_t sec_today = timeinfo.tm_hour * 3600 + timeinfo.tm_min * 60 + timeinfo.tm_sec;
+    if (sec_today > 30) {
+      duty_cycle_today = constrain((runtime_today_sec * 100.0f) / sec_today, 0.0f, 100.0f);
+    }
+  }
+
+  // Pagina 2 Menu: Aggiorna contatore ore sul grafico (nessun impatto o disordine su Pagina 1)
+  if (m_pElemOutTxt_GraphInfo != NULL) {
+    static unsigned long last_g_upd = 0;
+    if (now - last_g_upd >= 5000UL) {
+      last_g_upd = now;
+      uint32_t t_m = runtime_today_sec / 60;
+      uint32_t t_h = t_m / 60;
+      t_m = t_m % 60;
+      char gBuf[36];
+      snprintf(gBuf, sizeof(gBuf), "Grafico | Oggi: %uh %02um (%.0f%%)", (unsigned)t_h, (unsigned)t_m, duty_cycle_today);
+      gslc_ElemSetTxtStr(&m_gui, m_pElemOutTxt_GraphInfo, gBuf);
+    }
   }
 
   // Salva periodicamente lo storico su flash ogni 10 minuti se il relè è stato acceso
@@ -1394,15 +1698,27 @@ void update_runtime_counter() {
 }
 
 void evaluate_crono(bool force_apply) {
+  if (boost_active) {
+    current_preset_mode = "boost";
+    current_crono_desc = "Modo Boost (Rapido)";
+    unsigned long rem_sec = (boost_end_ms > millis()) ? ((boost_end_ms - millis()) / 1000UL) : 0;
+    unsigned long rem_min = (rem_sec + 59) / 60;
+    char bstBuf[16];
+    snprintf(bstBuf, sizeof(bstBuf), "BST %lum", rem_min);
+    if (m_pElemOutTxt_SetpointLbl != NULL) gslc_ElemSetTxtStr(&m_gui, m_pElemOutTxt_SetpointLbl, bstBuf);
+    return;
+  }
+
   if (!crono_enabled) {
     last_crono_key = -1;
     current_crono_slot = -1;
+    opt_start_active = false;
     if (current_preset_mode == "away") {
-      current_crono_desc = "Modo Eco (Assente)";
+      current_crono_desc = "Modo Away (Assente)";
+      if (m_pElemOutTxt_SetpointLbl != NULL) gslc_ElemSetTxtStr(&m_gui, m_pElemOutTxt_SetpointLbl, "MODO AWAY");
+    } else if (current_preset_mode == "eco") {
+      current_crono_desc = "Modo Eco (Risparmio)";
       if (m_pElemOutTxt_SetpointLbl != NULL) gslc_ElemSetTxtStr(&m_gui, m_pElemOutTxt_SetpointLbl, "MODO ECO");
-    } else if (current_preset_mode == "boost") {
-      current_crono_desc = "Modo Boost (Rapido)";
-      if (m_pElemOutTxt_SetpointLbl != NULL) gslc_ElemSetTxtStr(&m_gui, m_pElemOutTxt_SetpointLbl, "MODO BOOST");
     } else {
       current_preset_mode = "none";
       current_crono_desc = "Manuale";
@@ -1436,18 +1752,52 @@ void evaluate_crono(bool force_apply) {
   current_crono_slot = active_slot;
   uint16_t sm = crono_sched[day_type][active_slot].start_min;
   float st = crono_sched[day_type][active_slot].temp;
-  char descBuf[56];
-  snprintf(descBuf, sizeof(descBuf), "%s %s (%02d:%02d -> %.1f C)",
-           day_type ? "Weekend" : "Feriali",
-           crono_slot_names[active_slot],
-           sm / 60, sm % 60, st);
-  current_crono_desc = String(descBuf);
 
-  if (m_pElemOutTxt_SetpointLbl != NULL) {
-    gslc_ElemSetTxtStr(&m_gui, m_pElemOutTxt_SetpointLbl, crono_slot_short[active_slot]);
+  // Controllo Anticipo Termico (Optimum Start) in modalita Riscaldamento
+  opt_start_active = false;
+  if (opt_start_enabled && stato == 1) {
+    int next_slot = (active_slot + 1) % 4;
+    int next_day_type = (next_slot == 0) ? (((wday + 1) % 7 == 0 || (wday + 1) % 7 == 6) ? 1 : 0) : day_type;
+    int next_start_min = (int)crono_sched[next_day_type][next_slot].start_min;
+    if (next_slot == 0) next_start_min += 1440; // Prossimo giorno (+24h)
+
+    float next_temp = crono_sched[next_day_type][next_slot].temp;
+    float eff_t = get_effective_temperature();
+
+    if (!isnan(eff_t) && next_temp > eff_t && next_temp > st) {
+      float delta_t = next_temp - eff_t;
+      float speed = (opt_start_speed >= 0.5f) ? opt_start_speed : 1.5f;
+      int lead_min = (int)round((delta_t / speed) * 60.0f);
+      lead_min = constrain(lead_min, 5, 180); // Min 5 min, max 3 ore di anticipo
+
+      int min_until_next = next_start_min - now_min;
+      if (min_until_next > 0 && min_until_next <= lead_min) {
+        opt_start_active = true;
+        st = next_temp;
+        char descBuf[56];
+        snprintf(descBuf, sizeof(descBuf), "Anticipo Termico (-> %.1f C tra %dm)", st, min_until_next);
+        current_crono_desc = String(descBuf);
+        if (m_pElemOutTxt_SetpointLbl != NULL) {
+          gslc_ElemSetTxtStr(&m_gui, m_pElemOutTxt_SetpointLbl, "CRN-OPT");
+        }
+      }
+    }
   }
 
-  int key = day_type * 10 + active_slot;
+  if (!opt_start_active) {
+    char descBuf[56];
+    snprintf(descBuf, sizeof(descBuf), "%s %s (%02d:%02d -> %.1f C)",
+             day_type ? "Weekend" : "Feriali",
+             crono_slot_names[active_slot],
+             sm / 60, sm % 60, st);
+    current_crono_desc = String(descBuf);
+
+    if (m_pElemOutTxt_SetpointLbl != NULL) {
+      gslc_ElemSetTxtStr(&m_gui, m_pElemOutTxt_SetpointLbl, crono_slot_short[active_slot]);
+    }
+  }
+
+  int key = day_type * 10 + active_slot + (opt_start_active ? 100 : 0);
   if (force_apply || key != last_crono_key) {
     last_crono_key = key;
     temp_setpoint = round(st * 10.0f) / 10.0f;
@@ -1620,8 +1970,9 @@ void handleRoot() {
   } else {
     html += "<a class='btn' style='padding:9px;flex:1;background:#475569;font-size:13px;' href='/ctrl?crono=1'>Crono: OFF (Attiva)</a>";
   }
-  html += "<a class='btn' style='padding:9px;flex:1;background:#0284c7;font-size:13px;' href='/ctrl?preset=away'>Eco (18&deg;C)</a>";
-  html += "<a class='btn' style='padding:9px;flex:1;background:#ea580c;font-size:13px;' href='/ctrl?preset=boost'>Boost (23&deg;C)</a>";
+  html += "<a class='btn' style='padding:9px;flex:1;background:#0284c7;font-size:13px;' href='/ctrl?preset=eco'>Eco (" + String(eco_temp, 1) + "&deg;C)</a>";
+  html += "<a class='btn' style='padding:9px;flex:1;background:#ea580c;font-size:13px;' href='/ctrl?preset=boost'>Boost 1h (" + String(boost_temp, 1) + "&deg;C)</a>";
+  html += "<a class='btn' style='padding:9px;flex:1;background:#64748b;font-size:13px;' href='/ctrl?preset=away'>Away (" + String(away_temp, 1) + "&deg;C)</a>";
   html += "</div>";
   html += "<div class='btn-row'>";
   html += "<a class='btn' style='padding:7px;flex:1;font-size:12px;background:" + String(!buzzer_enabled ? "#dc2626" : "#334155") + ";' href='/ctrl?buzzer=0'>Buzzer Muto</a>";
@@ -1678,8 +2029,17 @@ void handleRoot() {
   uint32_t tot_7d_h = (tot_7d_sec / 60) / 60;
   uint32_t tot_7d_m = (tot_7d_sec / 60) % 60;
 
+  struct tm ti_dc;
+  float duty_cycle_today = 0.0f;
+  if (getLocalTime(&ti_dc, 10)) {
+    uint32_t sec_today = ti_dc.tm_hour * 3600 + ti_dc.tm_min * 60 + ti_dc.tm_sec;
+    if (sec_today > 30) {
+      duty_cycle_today = constrain((runtime_today_sec * 100.0f) / sec_today, 0.0f, 100.0f);
+    }
+  }
+
   html += "<div class='grid'>";
-  html += "<div><div class='lbl'>Accensione Oggi</div><div class='val' style='font-size:24px;color:#38bdf8;'>" + String(t_h) + "h " + String(t_m) + "m</div></div>";
+  html += "<div><div class='lbl'>Accensione Oggi</div><div class='val' style='font-size:24px;color:#38bdf8;'>" + String(t_h) + "h " + String(t_m) + "m <span style='font-size:14px;color:#93c5fd;'>(" + String(duty_cycle_today, 1) + "%)</span></div></div>";
   html += "<div><div class='lbl'>Accensione 7 Giorni</div><div class='val' style='font-size:24px;color:#a78bfa;'>" + String(tot_7d_h) + "h " + String(tot_7d_m) + "m</div></div>";
   html += "</div>";
 
@@ -1793,6 +2153,74 @@ void handleRoot() {
   html += "<label class='lbl' style='margin-top:6px;display:block;'>Topic MQTT Temperatura Esterna (da Home Assistant o Meteo)</label>";
   html += "<input name='ext_temp_top' value='" + String(ext_temp_topic) + "' placeholder='es. home/outside/temperature o sensore HA'>";
   html += "<p style='font-size:11px;color:#8da9c4;margin:4px 0 0 0;'>Mostrata sul display LCD a destra della data (segnaposto <code>T --.- &deg;C</code>). In HA puoi inviarla anche a <code>" + String(thermostat_id) + "outdoor_temp/set</code>.</p>";
+  html += "</div>";
+
+  // 8. Anticipo Termico Intelligente (Optimum Start)
+  String optStatus = opt_start_enabled ? (opt_start_active ? "<span style='color:#38bdf8'><b>ATTIVO (Pre-riscaldamento in corso!)</b></span>" : "<span style='color:#4ade80'>ABILITATO (Pronto)</span>") : "<span style='color:#94a3b8'>DISABILITATO</span>";
+  html += "<div style='background:#0b2545;padding:10px;border-radius:8px;margin-bottom:10px;'>";
+  html += "<div style='display:flex;justify-content:space-between;align-items:center;'>";
+  html += "<b>8. Anticipo Termico (Optimum Start):</b> " + optStatus;
+  html += "<a class='btn' style='padding:5px 10px;font-size:12px;background:" + String(opt_start_enabled ? "#dc2626" : "#16a34a") + ";' href='/ctrl?opt_en=" + String(opt_start_enabled ? 0 : 1) + "#adv-box'>" + (opt_start_enabled ? "Disabilita" : "Abilita") + "</a>";
+  html += "</div>";
+  html += "<p style='font-size:12px;color:#8da9c4;margin:4px 0 8px 0;'>Accende in anticipo la caldaia in base alla temperatura attuale per trovare la casa calda all'ora programmata.</p>";
+  html += "<div style='display:flex;gap:6px;align-items:center;flex-wrap:wrap;'>";
+  html += "<span style='font-size:12px;color:#cbd5e1;'>Velocit&agrave; riscaldamento impianto:</span>";
+  float opt_speeds[] = {1.0f, 1.5f, 2.0f, 2.5f};
+  for (int oi = 0; oi < 4; oi++) {
+    bool isSel = (opt_start_enabled && fabs(opt_start_speed - opt_speeds[oi]) < 0.1f);
+    html += "<a class='btn' style='padding:4px 8px;font-size:12px;background:" + String(isSel ? "#0284c7" : "#334155") + ";' href='/ctrl?opt_spd=" + String(opt_speeds[oi], 1) + "#adv-box'>" + String(opt_speeds[oi], 1) + " &deg;C/h</a>";
+  }
+  html += "</div></div>";
+
+  // 9. Sensore Remoto Prioritario / Media Multi-Sensore
+  String remModeStr = "Locale (BME280)";
+  if (remote_sensor_mode == 1) remModeStr = "Solo Remoto MQTT";
+  else if (remote_sensor_mode == 2) remModeStr = "Media 50/50 (Locale + Remoto)";
+  bool rem_valid = (!isnan(remote_temp_val) && (millis() - remote_temp_last_ms < 1800000UL));
+  String remStatus = rem_valid ? ("<span style='color:#38bdf8'><b>" + String(remote_temp_val, 1) + " &deg;C</b> (Ricevuto)</span>") : "<span style='color:#facc15'>In attesa o scaduto (--.- &deg;C)</span>";
+
+  html += "<div style='background:#0b2545;padding:10px;border-radius:8px;margin-bottom:10px;'>";
+  html += "<div style='display:flex;justify-content:space-between;align-items:center;'>";
+  html += "<b>9. Sensore Remoto / Multi-Sensore (MQTT):</b> <span style='color:#4ade80;'>" + remModeStr + "</span>";
+  html += "</div>";
+  html += "<p style='font-size:12px;color:#8da9c4;margin:4px 0 6px 0;'>Dato Remoto: " + remStatus + " &mdash; Fallback automatico su sensore locale dopo 30 min.</p>";
+  html += "<div style='display:flex;gap:6px;margin:6px 0;'>";
+  html += "<a class='btn' style='padding:6px 10px;font-size:12px;flex:1;background:" + String(remote_sensor_mode == 0 ? "#16a34a" : "#334155") + ";' href='/ctrl?rem_mode=0#adv-box'>Solo Locale</a>";
+  html += "<a class='btn' style='padding:6px 10px;font-size:12px;flex:1;background:" + String(remote_sensor_mode == 1 ? "#0284c7" : "#334155") + ";' href='/ctrl?rem_mode=1#adv-box'>Solo Remoto</a>";
+  html += "<a class='btn' style='padding:6px 10px;font-size:12px;flex:1;background:" + String(remote_sensor_mode == 2 ? "#7c3aed" : "#334155") + ";' href='/ctrl?rem_mode=2#adv-box'>Media 50/50</a>";
+  html += "</div>";
+  html += "<label class='lbl' style='margin-top:6px;display:block;'>Topic MQTT Sensore Remoto (es. stanza da letto o Zigbee/HA)</label>";
+  html += "<input name='rem_top' value='" + String(remote_sensor_topic) + "' placeholder='es. home/bedroom/temperature'>";
+  html += "</div>";
+
+  // 10. Modello Termico & Auto-Apprendimento Inerzia Edificio
+  String thermStatus = thermal_learning_enabled ? "<span style='color:#4ade80;'>Attivo</span>" : "<span style='color:#f87171;'>Disabilitato</span>";
+  html += "<div style='background:#0b2545;padding:10px;border-radius:8px;margin-bottom:10px;'>";
+  html += "<div style='display:flex;justify-content:space-between;align-items:center;'>";
+  html += "<b>10. Auto-Apprendimento Inerzia Edificio:</b> " + thermStatus;
+  html += "<a class='btn' style='padding:5px 10px;font-size:12px;background:" + String(thermal_learning_enabled ? "#dc2626" : "#16a34a") + ";' href='/ctrl?therm_en=" + String(thermal_learning_enabled ? 0 : 1) + "#adv-box'>" + (thermal_learning_enabled ? "Disabilita" : "Abilita") + "</a>";
+  html += "</div>";
+  html += "<p style='font-size:12px;color:#8da9c4;margin:4px 0 8px 0;'>Analizza continuamente i cicli termici reali (media mobile EMA) per misurare la velocit&agrave; di riscaldamento dell'edificio e calibrare l'Optimum Start.</p>";
+
+  html += "<div style='display:flex;gap:12px;flex-wrap:wrap;font-size:13px;margin-bottom:8px;background:#081b33;padding:8px;border-radius:6px;'>";
+  html += "<div>Riscaldamento appreso: <b style='color:#38bdf8;'>" + String(learned_heat_speed, 2) + " &deg;C/h</b> <span style='font-size:11px;color:#94a3b8;'>(" + String(heat_cycles_count) + " cicli)</span></div>";
+  html += "<div>Raffrescamento stimato: <b style='color:#38bdf8;'>" + String(learned_cool_speed, 2) + " &deg;C/h</b> <span style='font-size:11px;color:#94a3b8;'>(" + String(cool_cycles_count) + " cicli)</span></div>";
+  html += "</div>";
+
+  if (training_guided_active) {
+    unsigned long rem_sec = (training_guided_end_ms > millis()) ? ((training_guided_end_ms - millis()) / 1000UL) : 0;
+    unsigned long rem_min = (rem_sec + 59) / 60;
+    html += "<div style='background:#f59e0b22;border:1px solid #f59e0b;padding:8px;border-radius:6px;margin-bottom:8px;'>";
+    html += "<div style='color:#fbbf24;font-weight:bold;font-size:13px;'>&#9888; Calibrazione Rapida in corso (" + String(rem_min) + " min rimanenti)</div>";
+    html += "<div style='font-size:12px;color:#cbd5e1;margin:4px 0;'>T iniziale: <b>" + String(training_guided_start_temp, 1) + " &deg;C</b> &mdash; T attuale: <b>" + String(get_effective_temperature(), 1) + " &deg;C</b></div>";
+    html += "<a class='btn' style='display:inline-block;padding:6px 12px;background:#ef4444;font-size:12px;margin-top:4px;' href='/ctrl?train=0#adv-box'>&#9632; Interrompi Calibrazione</a>";
+    html += "</div>";
+  } else {
+    html += "<div style='display:flex;gap:8px;align-items:center;flex-wrap:wrap;'>";
+    html += "<a class='btn' style='padding:6px 12px;background:#0284c7;font-size:12px;' href='/ctrl?train=1#adv-box'>&#9654; Avvia Calibrazione Rapida (30 min)</a>";
+    html += "<span style='font-size:11px;color:#94a3b8;'>Accende la caldaia per 30m e calcola subito la curva di risposta termica.</span>";
+    html += "</div>";
+  }
   html += "</div>";
 
   html += "<button type='submit' style='background:#10b981;font-size:16px;font-weight:bold;'>Salva Impostazioni Avanzate</button>";
@@ -2021,17 +2449,27 @@ void setup_web_server() {
     if (webServer.hasArg("preset")) {
       String pr = webServer.arg("preset");
       if (pr == "away") {
+        if (boost_active) cancel_boost();
         crono_enabled = false;
         current_preset_mode = "away";
-        temp_setpoint = 18.0f;
-      } else if (pr == "boost") {
+        temp_setpoint = away_temp;
+        stato = 1;
+        set_thermostat_mode(1);
+      } else if (pr == "eco") {
+        if (boost_active) cancel_boost();
         crono_enabled = false;
-        current_preset_mode = "boost";
-        temp_setpoint = 23.0f;
+        current_preset_mode = "eco";
+        temp_setpoint = eco_temp;
+        stato = 1;
+        set_thermostat_mode(1);
+      } else if (pr == "boost") {
+        trigger_boost(boost_duration_min, boost_temp);
       } else if (pr == "schedule") {
+        if (boost_active) cancel_boost();
         crono_enabled = true;
         current_preset_mode = "schedule";
       } else {
+        if (boost_active) cancel_boost();
         crono_enabled = false;
         current_preset_mode = "none";
       }
@@ -2129,6 +2567,49 @@ void setup_web_server() {
         play_beep(2600, 25);
       }
     }
+    if (webServer.hasArg("opt_en")) {
+      opt_start_enabled = (webServer.arg("opt_en").toInt() != 0);
+      save_json_config();
+      evaluate_crono(true);
+      publish_ha_state();
+      play_beep(2600, 25);
+    }
+    if (webServer.hasArg("opt_spd")) {
+      float spd = webServer.arg("opt_spd").toFloat();
+      if (!isnan(spd) && spd >= 0.5f && spd <= 5.0f) {
+        opt_start_speed = round(spd * 10.0f) / 10.0f;
+        save_json_config();
+        evaluate_crono(true);
+        publish_ha_state();
+        play_beep(2600, 25);
+      }
+    }
+    if (webServer.hasArg("rem_mode")) {
+      int rmode = webServer.arg("rem_mode").toInt();
+      if (rmode >= 0 && rmode <= 2) {
+        remote_sensor_mode = (uint8_t)rmode;
+        save_json_config();
+        publish_ha_state();
+        play_beep(2600, 25);
+      }
+    }
+    if (webServer.hasArg("therm_en")) {
+      thermal_learning_enabled = (webServer.arg("therm_en").toInt() != 0);
+      save_json_config();
+      publish_ha_state();
+      play_beep(2600, 25);
+    }
+    if (webServer.hasArg("train")) {
+      String trn = webServer.arg("train");
+      if (trn == "1" || trn == "start") {
+        uint16_t dur = webServer.hasArg("train_dur") ? webServer.arg("train_dur").toInt() : 30;
+        if (dur < 10) dur = 10;
+        if (dur > 120) dur = 120;
+        start_thermal_training(dur);
+      } else {
+        cancel_or_finish_thermal_training(false);
+      }
+    }
     previousMillis_lcd = millis();
     lcd_set_bright();
     gslc_ElemSetVisible(&m_gui, m_pElemBtn_wake_up, false);
@@ -2173,7 +2654,25 @@ void setup_web_server() {
       float ath = webServer.arg("antifrost_th").toFloat();
       if (!isnan(ath) && ath >= 3.0f && ath <= 10.0f) antifrost_temp_threshold = round(ath * 10.0f) / 10.0f;
     }
+    if (webServer.hasArg("opt_en")) opt_start_enabled = (webServer.arg("opt_en").toInt() != 0);
+    if (webServer.hasArg("opt_spd")) {
+      float spd = webServer.arg("opt_spd").toFloat();
+      if (!isnan(spd) && spd >= 0.5f && spd <= 5.0f) opt_start_speed = round(spd * 10.0f) / 10.0f;
+    }
+    if (webServer.hasArg("rem_mode")) {
+      int rmode = webServer.arg("rem_mode").toInt();
+      if (rmode >= 0 && rmode <= 2) remote_sensor_mode = (uint8_t)rmode;
+    }
+    if (webServer.hasArg("rem_top")) {
+      strncpy(remote_sensor_topic, webServer.arg("rem_top").c_str(), sizeof(remote_sensor_topic) - 1);
+      remote_sensor_topic[sizeof(remote_sensor_topic) - 1] = '\0';
+      if (client.connected() && remote_sensor_mode != 0 && remote_sensor_topic[0] != '\0') {
+        client.subscribe(remote_sensor_topic);
+      }
+    }
+    if (webServer.hasArg("therm_en")) thermal_learning_enabled = (webServer.arg("therm_en").toInt() != 0);
     save_json_config();
+    evaluate_crono(true);
     publish_ha_state();
     play_beep(2700, 30);
     webServer.sendHeader("Location", "/#adv-box");
@@ -2476,6 +2975,39 @@ void setup()
           if (json["ext_temp_top"].is<const char*>()) {
             strncpy(ext_temp_topic, json["ext_temp_top"].as<const char*>(), sizeof(ext_temp_topic) - 1);
           }
+          if (json["opt_en"].is<int>()) {
+            opt_start_enabled = (json["opt_en"].as<int>() != 0);
+          }
+          if (json["opt_spd"].is<float>()) {
+            opt_start_speed = constrain(json["opt_spd"].as<float>(), 0.5f, 5.0f);
+          }
+          if (json["rem_mode"].is<int>()) {
+            remote_sensor_mode = (uint8_t)constrain(json["rem_mode"].as<int>(), 0, 2);
+          }
+          if (json["rem_top"].is<const char*>()) {
+            strncpy(remote_sensor_topic, json["rem_top"].as<const char*>(), sizeof(remote_sensor_topic) - 1);
+            remote_sensor_topic[sizeof(remote_sensor_topic) - 1] = '\0';
+          }
+          if (json["eco_sp"].is<float>()) {
+            eco_temp = constrain(json["eco_sp"].as<float>(), 10.0f, 25.0f);
+          }
+          if (json["away_sp"].is<float>()) {
+            away_temp = constrain(json["away_sp"].as<float>(), 5.0f, 22.0f);
+          }
+          if (json["bst_sp"].is<float>()) {
+            boost_temp = constrain(json["bst_sp"].as<float>(), 18.0f, 30.0f);
+          }
+          if (json["bst_dur"].is<int>()) {
+            boost_duration_min = constrain(json["bst_dur"].as<int>(), 10, 240);
+          }
+          if (json["therm_en"].is<int>()) thermal_learning_enabled = (json["therm_en"].as<int>() != 0);
+          if (json["l_heat_spd"].is<float>()) {
+            learned_heat_speed = constrain(json["l_heat_spd"].as<float>(), 0.3f, 6.0f);
+            opt_start_speed = constrain(learned_heat_speed, 0.5f, 5.0f);
+          }
+          if (json["l_cool_spd"].is<float>()) learned_cool_speed = constrain(json["l_cool_spd"].as<float>(), 0.3f, 6.0f);
+          if (json["h_cycles"].is<int>()) heat_cycles_count = json["h_cycles"].as<int>();
+          if (json["c_cycles"].is<int>()) cool_cycles_count = json["c_cycles"].as<int>();
           if (json["sched"].is<JsonArray>()) {
             JsonArray sched = json["sched"].as<JsonArray>();
             if (sched.size() >= 16) {
@@ -2631,14 +3163,36 @@ void loop()
   // ------------------------------------------------
   gslc_Update(&m_gui);
 
+  // Gestione timer Boost temporizzato
+  if (boost_active) {
+    if (millis() >= boost_end_ms) {
+      Serial.println("Timer Boost scaduto: ripristino stato precedente.");
+      cancel_boost();
+    } else {
+      static unsigned long last_bst_tick = 0;
+      if (millis() - last_bst_tick >= 15000UL) {
+        last_bst_tick = millis();
+        unsigned long rem_sec = (boost_end_ms - millis()) / 1000UL;
+        unsigned long rem_min = (rem_sec + 59) / 60;
+        char bstBuf[16];
+        snprintf(bstBuf, sizeof(bstBuf), "BST %lum", rem_min);
+        if (m_pElemOutTxt_SetpointLbl != NULL) {
+          gslc_ElemSetTxtStr(&m_gui, m_pElemOutTxt_SetpointLbl, bstBuf);
+        }
+      }
+    }
+  }
+
   unsigned long currentMillis = millis();
 
   if (currentMillis - previousMillis_temperature >= interval_temperature) {
     previousMillis_temperature = currentMillis;
     get_temp_print();
-    if (bme_ok) {
-      track_open_window(averageValueT.average());
+    float eff_t = get_effective_temperature();
+    if (!isnan(eff_t)) {
+      track_open_window(eff_t);
     }
+    evaluate_crono(false);
     update_indicator_spie();
     if (client.connected()) {
       char myConcatenation[80];
@@ -2752,11 +3306,38 @@ void loop()
       return;
     }
 
+    // Se il training termico guidato è attivo, mantieni il riscaldamento e gestisci il timer
+    if (training_guided_active) {
+      if (millis() >= training_guided_end_ms) {
+        cancel_or_finish_thermal_training(true);
+      } else {
+        static unsigned long last_train_tick = 0;
+        if (millis() - last_train_tick >= 10000UL) {
+          last_train_tick = millis();
+          unsigned long rem_sec = (training_guided_end_ms - millis()) / 1000UL;
+          unsigned long rem_min = (rem_sec + 59) / 60;
+          char tBuf[16];
+          snprintf(tBuf, sizeof(tBuf), "TRN %lum", rem_min);
+          if (m_pElemOutTxt_SetpointLbl != NULL) {
+            gslc_ElemSetTxtStr(&m_gui, m_pElemOutTxt_SetpointLbl, tBuf);
+          }
+        }
+        apply_relay_state(true);
+        if (!child_lock_active) gslc_ElemSetTxtStr(&m_gui, m_pElemOutTxt_stat, "TRN ");
+        publish_ha_state();
+        return;
+      }
+    }
+
+    float eff_t = get_effective_temperature();
+    bool temp_ok = !isnan(eff_t);
+
     // 1. Controllo Prioritario Protezione Antigelo: se T < soglia (con isteresi a +1.0 °C)
-    if (bme_ok && antifrost_enabled) {
-      if (averageValueT.average() <= antifrost_temp_threshold) {
+    // Non interviene se siamo in modalita Freddo / Estate (stato == 2)
+    if (temp_ok && antifrost_enabled && stato != 2) {
+      if (eff_t <= antifrost_temp_threshold) {
         antifrost_active = true;
-      } else if (averageValueT.average() >= (antifrost_temp_threshold + 1.0f)) {
+      } else if (eff_t >= (antifrost_temp_threshold + 1.0f)) {
         antifrost_active = false;
       }
     } else {
@@ -2767,8 +3348,7 @@ void loop()
       Serial.println("ALLERTA: Antigelo attivo! Accensione forzata riscaldamento.");
       if (rele_id[0] != 0 && client.connected()) client.publish(rele_id, "ON");
       gslc_ElemSetTxtStr(&m_gui, m_pElemOutTxt_stat, "GELO");
-      digitalWrite(rele_pin, HIGH);
-      last_relay_active_time = currentMillis;
+      apply_relay_state(true);
       if (m_pElemOutTxt_SetpointLbl != NULL) {
         char geloBuf[16];
         snprintf(geloBuf, sizeof(geloBuf), "ANTIGELO %.0fC", antifrost_temp_threshold);
@@ -2784,7 +3364,7 @@ void loop()
       Serial.println("Finestra aperta: riscaldamento temporaneamente sospeso.");
       if (rele_id[0] != 0 && client.connected()) client.publish(rele_id, "OFF");
       gslc_ElemSetTxtStr(&m_gui, m_pElemOutTxt_stat, "WNDW");
-      digitalWrite(rele_pin, LOW);
+      apply_relay_state(false);
       publish_ha_state();
       return;
     }
@@ -2792,39 +3372,37 @@ void loop()
     // Calcolo isteresi dinamica
     float eff_hyst = hysteresis_enabled ? hysteresis_val : 0.05f;
       
-    if (stato == 1 && bme_ok){
-      if (averageValueT.average() >= temp_setpoint){
+    if (stato == 1 && temp_ok){
+      if (eff_t >= temp_setpoint){
         //stacca rele
         Serial.println("stacco rele");
         if (rele_id[0]!=0 && client.connected()) client.publish(rele_id, "OFF");
         if (!child_lock_active) gslc_ElemSetTxtStr(&m_gui,m_pElemOutTxt_stat,"OFF");
-        digitalWrite(rele_pin, LOW);
+        apply_relay_state(false);
       }
-      else if(averageValueT.average() <= (temp_setpoint - eff_hyst)){   
+      else if(eff_t <= (temp_setpoint - eff_hyst)){   
         //attacca rele  
         Serial.println("attacco rele");
         if (rele_id[0]!=0 && client.connected()) client.publish(rele_id, "ON");
         if (!child_lock_active) gslc_ElemSetTxtStr(&m_gui,m_pElemOutTxt_stat,"ON ");
-        digitalWrite(rele_pin, HIGH);
-        last_relay_active_time = currentMillis;
+        apply_relay_state(true);
       }
     }
         
-    if (stato == 2 && bme_ok){
-      if (averageValueT.average() <= temp_setpoint){
+    if (stato == 2 && temp_ok){
+      if (eff_t <= temp_setpoint){
         //stacca rele
         Serial.println("stacco rele");
         if (rele_id[0]!=0 && client.connected()) client.publish(rele_id, "OFF");
         if (!child_lock_active) gslc_ElemSetTxtStr(&m_gui,m_pElemOutTxt_stat,"OFF");
-        digitalWrite(rele_pin, LOW);
+        apply_relay_state(false);
       }
-      else if(averageValueT.average() >= (temp_setpoint + eff_hyst)){
+      else if(eff_t >= (temp_setpoint + eff_hyst)){
         //attacca rele  
         Serial.println("attacco rele");
         if (rele_id[0]!=0 && client.connected()) client.publish(rele_id, "ON");
         if (!child_lock_active) gslc_ElemSetTxtStr(&m_gui,m_pElemOutTxt_stat,"ON ");
-        digitalWrite(rele_pin, HIGH);
-        last_relay_active_time = currentMillis;
+        apply_relay_state(true);
       }
     }
     if (stato == 0){
@@ -2832,7 +3410,7 @@ void loop()
       Serial.println("stacco rele");
       if (rele_id[0]!=0 && client.connected()) client.publish(rele_id, "OFF");
       if (!child_lock_active) gslc_ElemSetTxtStr(&m_gui,m_pElemOutTxt_stat,"---");
-      digitalWrite(rele_pin, LOW);
+      apply_relay_state(false);
     }
     publish_ha_state();
   }
