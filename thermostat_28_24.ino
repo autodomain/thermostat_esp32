@@ -1393,6 +1393,13 @@ void handleRoot() {
   html += "<style>";
   html += "body{font-family:system-ui,-apple-system,sans-serif;background:#0b2545;color:#eef4ed;margin:0;padding:16px;}";
   html += ".card{background:#134074;border-radius:12px;padding:16px;margin-bottom:16px;box-shadow:0 4px 12px rgba(0,0,0,0.3);}";
+  html += "details.card summary{cursor:pointer;list-style:none;user-select:none;display:flex;align-items:center;justify-content:space-between;}";
+  html += "details.card summary::-webkit-details-marker{display:none;}";
+  html += "details.card summary h3{margin:0;display:inline-flex;align-items:center;gap:6px;color:#8da9c4;font-size:16px;}";
+  html += "details.card summary:hover h3{color:#fff;}";
+  html += "details.card summary::after{content:'&#9660;';font-size:12px;color:#8da9c4;transition:transform 0.2s ease;transform:rotate(-90deg);}";
+  html += "details.card[open] summary::after{transform:rotate(0deg);}";
+  html += "details.card[open]>*:not(summary){margin-top:14px;}";
   html += "h2,h3{margin-top:0;color:#8da9c4;}";
   html += ".grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;text-align:center;}";
   html += ".val{font-size:28px;font-weight:bold;color:#fff;}";
@@ -1454,7 +1461,7 @@ void handleRoot() {
   html += "</div></div>";
 
   // Card 1-Crono: Programmazione Oraria Giornaliera / Settimanale (Cronotermostato)
-  html += "<div class='card' id='crono-box'><h3>Programmazione Oraria Settimanale (Cronotermostato)</h3>";
+  html += "<details class='card' id='crono-box'><summary><h3>&#128197; Programmazione Oraria Settimanale (Cronotermostato)</h3></summary>";
   html += "<p style='margin:4px 0 10px 0;font-size:13px;color:#93c5fd;'>Imposta le 4 fasce orarie giornaliere per <b>Giorni Feriali (Lun&ndash;Ven)</b> e <b>Weekend (Sab&ndash;Dom)</b>. Collegato con Home Assistant (Preset <code>schedule</code>).</p>";
   html += "<form method='POST' action='/crono'>";
   for (int d = 0; d < 2; d++) {
@@ -1478,10 +1485,10 @@ void handleRoot() {
   html += "<div class='btn-row'>";
   html += "<button type='button' style='background:#475569;flex:1;font-size:13px;' onclick=\"for(var s=0;s<4;s++){document.getElementById('t1_'+s).value=document.getElementById('t0_'+s).value;document.getElementById('sp1_'+s).value=document.getElementById('sp0_'+s).value;}\">Copia Feriali su Weekend</button>";
   html += "<button type='submit' style='background:#16a34a;flex:1.5;'>Salva Programmazione &amp; Attiva Crono</button>";
-  html += "</div></form></div>";
+  html += "</div></form></details>";
 
   // Card 1-Smart: Protezione Antigelo, Finestra Aperta e Ore di Accensione Caldaia
-  html += "<div class='card' id='smart-box'><h3>Sicurezza &amp; Consumi Caldaia</h3>";
+  html += "<details class='card' id='smart-box'><summary><h3>&#128293; Sicurezza &amp; Consumi Caldaia</h3></summary>";
   uint32_t t_m = runtime_today_sec / 60;
   uint32_t t_h = t_m / 60;
   t_m = t_m % 60;
@@ -1518,10 +1525,10 @@ void handleRoot() {
   html += "<div style='flex:1;background:#0b2545;padding:8px;border-radius:6px;font-size:13px;'>";
   html += "<b>Rilevamento Finestra:</b> " + winStr + "<br>";
   html += "<a class='btn' style='display:inline-block;padding:4px 8px;font-size:11px;margin-top:4px;background:#334155;' href='/ctrl?openwin=" + String(open_window_enabled ? 0 : 1) + "'>" + (open_window_enabled ? "Disabilita" : "Abilita") + "</a>";
-  html += "</div></div></div>";
+  html += "</div></div></details>";
 
   // Card 2A: Funzionalità Avanzate & Protezioni Impianto
-  html += "<div class='card' id='adv-box'><h3>Funzionalit&agrave; Avanzate &amp; Protezioni Impianto</h3>";
+  html += "<details class='card' id='adv-box'><summary><h3>&#9881; Funzionalit&agrave; Avanzate &amp; Protezioni Impianto</h3></summary>";
   html += "<p style='margin:4px 0 12px 0;font-size:13px;color:#93c5fd;'>Configura le protezioni intelligenti, isteresi dinamica, modalit&agrave; notte, blocco pulizia e sensori esterni.</p>";
 
   // 1. Isteresi
@@ -1596,10 +1603,10 @@ void handleRoot() {
   html += "</div></div>";
 
   html += "<button type='submit' style='background:#10b981;font-size:16px;font-weight:bold;'>Salva Impostazioni Avanzate</button>";
-  html += "</form></div>";
+  html += "</form></details>";
 
   // Card 1A: Meteo Barometrico & Comfort Ambientale (BME280)
-  html += "<div class='card'><h3>Meteo Barometrico &amp; Comfort Ambientale</h3>";
+  html += "<details class='card' id='meteo-box'><summary><h3>&#9925; Meteo Barometrico &amp; Comfort Ambientale</h3></summary>";
   if (bme_ok && last_pressure_hpa > 300.0f) {
     String deltaSign = (pressure_delta_3h >= 0.0f) ? "+" : "";
     html += "<div class='grid'>";
@@ -1614,10 +1621,11 @@ void handleRoot() {
   } else {
     html += "<p style='color:#fca5a5;margin:4px 0;'>In attesa di lettura valida dal sensore BME280 (Pressione / Temperatura / Umidit&agrave;).</p>";
   }
-  html += "</div>";
+  html += "</details>";
 
   // Card 1B: Scanner I2C & Diagnostica Sensore BME280
-  html += "<div class='card' id='i2c-box'><h3>Scanner I2C &amp; Diagnostica Sensore</h3>";
+  bool hasI2cArg = (webServer.hasArg("i2cscan") || webServer.hasArg("i2cpinscan"));
+  html += "<details class='card' id='i2c-box'" + String(hasI2cArg ? " open" : "") + "><summary><h3>&#128269; Scanner I2C &amp; Diagnostica Sensore</h3></summary>";
   char addrStr[12];
   if (bme_ok && bme_found_addr != 0) snprintf(addrStr, sizeof(addrStr), "0x%02X", bme_found_addr);
   else snprintf(addrStr, sizeof(addrStr), "Non rilevato");
@@ -1631,10 +1639,10 @@ void handleRoot() {
   html += "<form method='POST' action='/i2c' style='margin-top:10px;'>";
   html += "<div class='grid'><div><label class='lbl'>Pin GPIO SDA</label><input type='number' name='sda' value='" + String(i2c_sda_pin) + "'></div>";
   html += "<div><label class='lbl'>Pin GPIO SCL</label><input type='number' name='scl' value='" + String(i2c_scl_pin) + "'></div></div>";
-  html += "<button type='submit'>Imposta Pin I2C e Scansiona</button></form></div>";
+  html += "<button type='submit'>Imposta Pin I2C e Scansiona</button></form></details>";
 
   // Card 2: Connessione WiFi
-  html += "<div class='card'><h3>Connessione WiFi</h3>";
+  html += "<details class='card' id='wifi-box'" + String(doScan ? " open" : "") + "><summary><h3>&#128246; Connessione WiFi</h3></summary>";
   if (WiFi.status() == WL_CONNECTED) {
     int rssi = WiFi.RSSI();
     int pct = constrain(2 * (rssi + 100), 0, 100);
@@ -1651,7 +1659,7 @@ void handleRoot() {
   } else {
     html += "<p>Stato: <b>Modalit&agrave; Access Point (Termostato_AP - 192.168.4.1)</b></p>";
   }
-  html += "<p><a class='btn' style='padding:8px 12px;width:auto;' href='/?scan=1'>Scansiona Reti WiFi</a></p>";
+  html += "<p><a class='btn' style='padding:8px 12px;width:auto;' href='/?scan=1#wifi-box'>Scansiona Reti WiFi</a></p>";
   if (doScan) {
     if (nNets < 0) {
       html += "<p style='color:#f87171;'><b>Scansione non riuscita (codice " + String(nNets) + "). Riprova o digita l'SSID direttamente qui sotto.</b></p>";
@@ -1672,13 +1680,14 @@ void handleRoot() {
   html += "<input id='ssid' name='ssid' value='" + String(wifi_ssid) + "' placeholder='Inserisci o clicca una rete WiFi'>";
   html += "<label class='lbl'>Password WiFi</label>";
   html += "<input type='password' name='pass' value='" + String(wifi_pass) + "' placeholder='Password WiFi'>";
-  html += "<button type='submit'>Salva e Connetti al WiFi</button></form></div>";
+  html += "<button type='submit'>Salva e Connetti al WiFi</button></form></details>";
 
   // Card 3: Parametri MQTT, Struttura Immobile & Home Assistant Auto-Discovery
-  html += "<div class='card' id='mqtt-box'><h3>Struttura Immobile &amp; Home Assistant (MQTT)</h3>";
+  bool hasHaArg = webServer.hasArg("hadisc");
+  html += "<details class='card' id='mqtt-box'" + String(hasHaArg ? " open" : "") + "><summary><h3>&#127968; Struttura Immobile &amp; Home Assistant (MQTT)</h3></summary>";
   html += "<p style='margin:4px 0;'>Stato Broker MQTT: <b>" + (client.connected() ? ("<span style='color:#4ade80'>CONNESSO a " + String(mqtt_server) + "</span>") : ("<span style='color:#f87171'>NON CONNESSO (" + String(mqtt_server) + ")</span>")) + "</b></p>";
   
-  html += "<div style='background:#0b2545;padding:12px;border-radius:8px;margin:10px 0;border-left:4px solid #38bdf8;font-size:13px;'>";
+  html += "<div style='background:#0b2545;padding:12px;border-radius:8px;margin-margin:10px 0;border-left:4px solid #38bdf8;font-size:13px;'>";
   html += "<div style='margin-bottom:4px;'><b>Posizione:</b> <span style='color:#fde047;font-size:14px;'>" + get_full_location_name() + "</span></div>";
   html += "<div style='margin-bottom:4px;'><b>Nome Zona HA:</b> <span style='color:#4ade80;'>" + zoneName + "</span> &mdash; <b>Area Suggerita:</b> <span style='color:#93c5fd;'>" + get_floor_name() + " - " + get_room_name() + "</span></div>";
   html += "<div><b>Topic Base:</b> <code>" + String(thermostat_id) + "</code> &mdash; <b>Entit&agrave; Clima:</b> <code>climate.termostato_" + zoneSlug + "</code></div>";
@@ -1745,9 +1754,25 @@ void handleRoot() {
   html += "<div class='grid'><div><label class='lbl'>Utente MQTT</label><input name='mqtt_user' value='" + String(mqtt_user) + "'></div>";
   html += "<div><label class='lbl'>Password MQTT</label><input type='password' name='mqtt_pass' value='" + String(mqtt_pass) + "'></div></div>";
   html += "<label class='lbl'>Offset Temperatura (&deg;C, da -5.0 a +5.0)</label><input name='offset' value='" + String(temperature_offset, 1) + "'>";
-  html += "<button type='submit'>Salva Configurazione Immobile &amp; Riconnetti</button></form></div>";
+  html += "<button type='submit'>Salva Configurazione Immobile &amp; Riconnetti</button></form></details>";
 
   html += "<script>";
+  html += "if(window.location.hash){";
+  html += "  var el=document.querySelector(window.location.hash);";
+  html += "  if(el && el.tagName==='DETAILS') el.open=true;";
+  html += "}";
+  html += "document.querySelectorAll('details.card').forEach(function(d){";
+  html += "  var id=d.id;";
+  html += "  if(id){";
+  html += "    var saved=localStorage.getItem('tab_'+id);";
+  html += "    if(saved!==null && !window.location.hash && !window.location.search){";
+  html += "      d.open=(saved==='1');";
+  html += "    }";
+  html += "    d.addEventListener('toggle',function(){";
+  html += "      localStorage.setItem('tab_'+id,d.open?'1':'0');";
+  html += "    });";
+  html += "  }";
+  html += "});";
   html += "function slug(s){return s.trim().toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'');}";
   html += "function setPill(id,val){document.getElementById(id).value=val;updateAutoTopic();}";
   html += "function updateAutoTopic(){";
