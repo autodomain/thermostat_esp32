@@ -1397,8 +1397,8 @@ void handleRoot() {
   html += "details.card summary::-webkit-details-marker{display:none;}";
   html += "details.card summary h3{margin:0;display:inline-flex;align-items:center;gap:6px;color:#8da9c4;font-size:16px;}";
   html += "details.card summary:hover h3{color:#fff;}";
-  html += "details.card summary::after{content:'&#9660;';font-size:12px;color:#8da9c4;transition:transform 0.2s ease;transform:rotate(-90deg);}";
-  html += "details.card[open] summary::after{transform:rotate(0deg);}";
+  html += "details.card summary::after{content:'';display:inline-block;width:8px;height:8px;border-right:2px solid #8da9c4;border-bottom:2px solid #8da9c4;transform:rotate(-45deg);transition:transform 0.2s ease;margin-right:6px;}";
+  html += "details.card[open] summary::after{transform:rotate(45deg);}";
   html += "details.card[open]>*:not(summary){margin-top:14px;}";
   html += "h2,h3{margin-top:0;color:#8da9c4;}";
   html += ".grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;text-align:center;}";
