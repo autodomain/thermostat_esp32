@@ -23,6 +23,7 @@
 #include <ArduinoOTA.h>
 
 #include <EEPROM.h>
+#include <GUIslice.h>
 
 // define the number of bytes you want to access
 #define EEPROM_SIZE 16
@@ -32,13 +33,23 @@
 #define EEPROM_BUZZER_ADDR 8
 #define EEPROM_CRONO_ADDR  9
 #define EEPROM_MAGIC_VAL   0xA5
-#define BUZZER_PIN         21
-
-//#define I2C_SDA 25
-//#define I2C_SCL 33
-
-#define I2C_SDA 17
-#define I2C_SCL 16
+#if defined(HARDWARE_CYD)
+  #define BUZZER_PIN         26    // Audio DAC/Speaker su CYD (GPIO 26)
+  #define I2C_SDA            22    // Pin SDA su connettore P3 del CYD
+  #define I2C_SCL            27    // Pin SCL su connettore P3 del CYD
+  #define RELE_PIN_DEFAULT   4     // Relè esterno o GPIO disponibile (es. GPIO 4 o P3)
+  #define TFT_BL_PIN         21    // Retroilluminazione CYD (GPIO 21, attivo HIGH)
+  #define TFT_BL_BRIGHT      255
+  #define TFT_BL_DIM         15
+#else
+  #define BUZZER_PIN         21    // Piezo buzzer su AZ-Touch (GPIO 21)
+  #define I2C_SDA            17    // SDA su AZ-Touch
+  #define I2C_SCL            16    // SCL su AZ-Touch
+  #define RELE_PIN_DEFAULT   26    // Relè su AZ-Touch
+  #define TFT_BL_PIN         15    // Retroilluminazione AZ-Touch (GPIO 15, attivo LOW)
+  #define TFT_BL_BRIGHT      0
+  #define TFT_BL_DIM         240
+#endif
 
 
 //#define TOUCH_ROTATION_SWAPXY
@@ -89,6 +100,46 @@ int touch_remap_yx = 0;
 int touch_swap_xy  = 1;
 int touch_flip_x   = 0;
 int touch_flip_y   = 1;
+
+#if defined(HARDWARE_CYD)
+#include <SPI.h>
+#include <XPT2046_Touchscreen.h>
+#include <GUIslice_th.h>
+
+#define XPT2046_IRQ  36
+#define XPT2046_MOSI 32
+#define XPT2046_MISO 39
+#define XPT2046_CLK  25
+#define XPT2046_CS   33
+
+#define CYD_LED_RED   4
+#define CYD_LED_GREEN 16
+#define CYD_LED_BLUE  17
+#define CYD_LDR_PIN   34
+
+class CYDTouchHandler : public TouchHandler {
+public:
+  CYDTouchHandler() : ts(XPT2046_CS, XPT2046_IRQ) {
+    setSize(320, 240);
+    setCalibration(250, 3800, 250, 3800);
+    setSwapFlip(false, false, false);
+  }
+  void begin() override {
+    SPI.begin(XPT2046_CLK, XPT2046_MISO, XPT2046_MOSI, XPT2046_CS);
+    ts.begin();
+    ts.setRotation(1);
+  }
+  THPoint getPoint() override {
+    if (!ts.touched()) return THPoint(0, 0, 0);
+    TS_Point p = ts.getPoint();
+    return scale(THPoint(p.x, p.y, p.z));
+  }
+private:
+  XPT2046_Touchscreen ts;
+};
+
+static CYDTouchHandler cydTouchHandler;
+#endif
 
 
 #include <AverageValue.h>
@@ -205,7 +256,7 @@ const float threshold_offset = 0.2;
 float temperature_offset = 0;
 
 // NOTA: GPIO 18 e' usato da TFT_SCLK! Usiamo GPIO 26 per il rele locale per non bloccare il bus SPI.
-const int rele_pin = 26;
+const int rele_pin = RELE_PIN_DEFAULT;
 
 // Forward declarations per funzioni in altri file .ino
 void connect();
@@ -230,6 +281,14 @@ void update_wifi_signal_bars();
 // Headers to include
 // ------------------------------------------------
 #include "gui_design_GSLC.h"
+
+inline void lcd_set_bright() {
+  ledcWrite(0, TFT_BL_BRIGHT);
+}
+
+inline void lcd_set_dim() {
+  ledcWrite(0, TFT_BL_DIM);
+}
 
 // ------------------------------------------------
 // Program Globals
@@ -291,7 +350,7 @@ bool CbBtnCommon(void* pvGui,void *pvElemRef,gslc_teTouch eTouch,int16_t nX,int1
 //<Button Enums !Start!>
       case E_ELEM_BTN_INC:
         previousMillis_lcd = millis();
-        ledcWrite(0, 0);
+        lcd_set_bright();
         gslc_ElemSetVisible(&m_gui,m_pElemBtn_wake_up,false);
         gslc_ElemSetVisible(&m_gui,m_pElemBtn_wake_up2,false);
         play_beep(2800, 22);
@@ -302,7 +361,7 @@ bool CbBtnCommon(void* pvGui,void *pvElemRef,gslc_teTouch eTouch,int16_t nX,int1
         break;
       case E_ELEM_BTN_DEC:
         previousMillis_lcd = millis();
-        ledcWrite(0, 0);
+        lcd_set_bright();
         gslc_ElemSetVisible(&m_gui,m_pElemBtn_wake_up,false);
         gslc_ElemSetVisible(&m_gui,m_pElemBtn_wake_up2,false);
         play_beep(2200, 22);
@@ -313,53 +372,32 @@ bool CbBtnCommon(void* pvGui,void *pvElemRef,gslc_teTouch eTouch,int16_t nX,int1
         break;
       case E_ELEM_BTN_MODE:
         previousMillis_lcd = millis();
-        ledcWrite(0, 0);
+        lcd_set_bright();
         gslc_ElemSetVisible(&m_gui,m_pElemBtn_wake_up,false);
         gslc_ElemSetVisible(&m_gui,m_pElemBtn_wake_up2,false);
         play_beep(2500, 45);
-        if (stato==0){
-          stato = 1;
-          stato_shadow = 1;
-          gslc_ElemSetTxtStr(&m_gui,m_pElemOutTxt_status,"Caldo");
-          gslc_ElemSetTxtCol(&m_gui,m_pElemOutTxt_status,{255,0,0});
-          if (client.connected()) client.publish(myConc,"heat",true,0);
-        }
-        else if(stato==1){
-          stato = 2;
-          stato_shadow = 2;
-          gslc_ElemSetTxtStr(&m_gui,m_pElemOutTxt_status,"Freddo");
-          gslc_ElemSetTxtCol(&m_gui,m_pElemOutTxt_status,{0,150,255});
-          if (client.connected()) client.publish(myConc,"cool",true,0);
-        }
-        else {
-          stato_shadow = stato;
-          stato = 0;
-          gslc_ElemSetTxtStr(&m_gui,m_pElemOutTxt_status,"Spento");
-          gslc_ElemSetTxtCol(&m_gui,m_pElemOutTxt_status,{135,135,135});
-          if (client.connected()) client.publish(myConc,"off",true,0);
-        }
-        save_state_eeprom();
-        publish_ha_state();
+        if (stato == 0) set_thermostat_mode(1);
+        else if (stato == 1) set_thermostat_mode(2);
+        else set_thermostat_mode(0);
         delay(10);
         break;
       case E_ELEM_BTN_MENU:
         previousMillis_lcd = millis();
-        ledcWrite(0, 0);
+        lcd_set_bright();
         gslc_ElemSetVisible(&m_gui,m_pElemBtn_wake_up,false);
         gslc_ElemSetVisible(&m_gui,m_pElemBtn_wake_up2,false);
         play_beep(2600, 25);
         gslc_SetPageCur(&m_gui, E_PG2);
-        
         break;
       case E_ELEM_BTN_WAKE_UP:
         previousMillis_lcd = millis();
-        ledcWrite(0, 0);
+        lcd_set_bright();
         gslc_ElemSetVisible(&m_gui,m_pElemBtn_wake_up,false);
         gslc_ElemSetVisible(&m_gui,m_pElemBtn_wake_up2,false);
         break;
       case E_ELEM_BTN_MAIN_PAGE:
         previousMillis_lcd = millis();
-        ledcWrite(0, 0);
+        lcd_set_bright();
         gslc_ElemSetVisible(&m_gui,m_pElemBtn_wake_up,false);
         gslc_ElemSetVisible(&m_gui,m_pElemBtn_wake_up2,false);
         play_beep(2600, 25);
@@ -371,7 +409,7 @@ bool CbBtnCommon(void* pvGui,void *pvElemRef,gslc_teTouch eTouch,int16_t nX,int1
         break;
       case E_ELEM_BTN_SAVE:
         previousMillis_lcd = millis();
-        ledcWrite(0, 0);
+        lcd_set_bright();
         gslc_ElemSetVisible(&m_gui,m_pElemBtn_wake_up,false);
         gslc_ElemSetVisible(&m_gui,m_pElemBtn_wake_up2,false);
         play_beep(2800, 40);
@@ -380,7 +418,7 @@ bool CbBtnCommon(void* pvGui,void *pvElemRef,gslc_teTouch eTouch,int16_t nX,int1
         break;
       case E_ELEM_BTN_WAKE_UP2:
         previousMillis_lcd = millis();
-        ledcWrite(0, 0);
+        lcd_set_bright();
         gslc_ElemSetVisible(&m_gui,m_pElemBtn_wake_up,false);
         gslc_ElemSetVisible(&m_gui,m_pElemBtn_wake_up2,false);      
         break;
@@ -446,7 +484,7 @@ bool CbSlidePos(void* pvGui,void* pvElemRef,int16_t nPos)
       dtostrf(temperature_offset, 4, 1, buffer);
       gslc_ElemSetTxtStr(&m_gui,m_pElemOutTxt_temp_offset,buffer);
       previousMillis_lcd = millis();
-      ledcWrite(0, 0);
+      lcd_set_bright();
       gslc_ElemSetVisible(&m_gui,m_pElemBtn_wake_up,false);
       gslc_ElemSetVisible(&m_gui,m_pElemBtn_wake_up2,false); 
       break;
@@ -631,7 +669,8 @@ String run_i2c_autopin_scan() {
   i2c_scan_count++;
   unsigned long t0 = millis();
   const int pairs[][2] = {
-    {17, 16}, {16, 17},
+    {22, 27}, {27, 22}, // CYD Connettore P3
+    {17, 16}, {16, 17}, // AZ-Touch standard
     {25, 33}, {33, 25},
     {25, 26}, {26, 25},
     {27, 26}, {26, 27},
@@ -934,7 +973,7 @@ void update_wifi_signal_bars() {
     int bx = 244 + b * 4;
     int by = 18 - heights[b];
     gslc_tsColor c = (b < bars) ? barCol : offCol;
-    gslc_DrawFillRect(&m_gui, (gslc_tsRect){(int16_t)bx, (int16_t)by, 3, (int16_t)heights[b]}, c);
+    gslc_DrawFillRect(&m_gui, (gslc_tsRect){(int16_t)bx, (int16_t)by, 3, (uint16_t)heights[b]}, c);
   }
 }
 
@@ -1181,6 +1220,27 @@ void save_state_eeprom() {
   EEPROM.commit();
 }
 
+void update_cyd_leds() {
+#if defined(HARDWARE_CYD)
+  if (stato == 1) {
+    // Riscaldamento: LED Rosso acceso (active LOW)
+    digitalWrite(CYD_LED_RED, LOW);
+    digitalWrite(CYD_LED_GREEN, HIGH);
+    digitalWrite(CYD_LED_BLUE, HIGH);
+  } else if (stato == 2) {
+    // Raffrescamento: LED Blu acceso (active LOW)
+    digitalWrite(CYD_LED_RED, HIGH);
+    digitalWrite(CYD_LED_GREEN, HIGH);
+    digitalWrite(CYD_LED_BLUE, LOW);
+  } else {
+    // Spento: tutti i LED RGB spenti
+    digitalWrite(CYD_LED_RED, HIGH);
+    digitalWrite(CYD_LED_GREEN, HIGH);
+    digitalWrite(CYD_LED_BLUE, HIGH);
+  }
+#endif
+}
+
 void set_thermostat_mode(int new_mode) {
   char myConc[80];
   snprintf(myConc, sizeof(myConc), "%smode/get", thermostat_id);
@@ -1204,6 +1264,7 @@ void set_thermostat_mode(int new_mode) {
     if (client.connected()) client.publish(myConc,"off",true,0);
   }
   save_state_eeprom();
+  update_cyd_leds();
   publish_ha_state();
   gslc_Update(&m_gui);
 }
@@ -1606,7 +1667,7 @@ void setup_web_server() {
       play_beep(2600, 25);
     }
     previousMillis_lcd = millis();
-    ledcWrite(0, 0);
+    lcd_set_bright();
     gslc_ElemSetVisible(&m_gui, m_pElemBtn_wake_up, false);
     gslc_ElemSetVisible(&m_gui, m_pElemBtn_wake_up2, false);
     webServer.sendHeader("Location", "/");
@@ -1735,18 +1796,26 @@ void setup()
     chipId |= ((ESP.getEfuseMac() >> (40 - i)) & 0xff) << i;
   }
 
-  // Initialize backlight (GPIO 15 active low on AZ-Touch MOD), relay pin, and piezo buzzer (GPIO 21)
-  pinMode(15, OUTPUT);
+  // Initialize backlight, relay pin, and buzzer
+  pinMode(TFT_BL_PIN, OUTPUT);
   pinMode(rele_pin, OUTPUT);
   pinMode(BUZZER_PIN, OUTPUT);
   digitalWrite(BUZZER_PIN, LOW);
+#if defined(HARDWARE_CYD)
+  pinMode(CYD_LED_RED, OUTPUT);
+  pinMode(CYD_LED_GREEN, OUTPUT);
+  pinMode(CYD_LED_BLUE, OUTPUT);
+  digitalWrite(CYD_LED_RED, HIGH);
+  digitalWrite(CYD_LED_GREEN, HIGH);
+  digitalWrite(CYD_LED_BLUE, HIGH);
+#endif
   // configure LED PWM functionalities
   ledcSetup(0, 5000, 8);
-  ledcAttachPin(15, 0);
-  ledcWrite(0, 0);
+  ledcAttachPin(TFT_BL_PIN, 0);
+  lcd_set_bright();
   digitalWrite(rele_pin, LOW);
 
-  // Initialize I2C (SDA=17, SCL=16) and run initial I2C scan + BME280 init
+  // Initialize I2C and run initial I2C scan + BME280 init
   run_i2c_scan(i2c_sda_pin, i2c_scl_pin);
 
   EEPROM.begin(EEPROM_SIZE);
@@ -1781,7 +1850,13 @@ void setup()
 
   // Initialize GUIslice display
   gslc_InitDebug(&DebugOut);
+#if defined(HARDWARE_CYD)
+  gslc_InitTouchHandler(&cydTouchHandler);
+#endif
   InitGUIslice_gen();
+#if defined(HARDWARE_CYD)
+  gslc_SetTouchRemapEn(&m_gui, false);
+#endif
 
   gslc_ElemXSliderSetPos(&m_gui,m_pElemSlider_temp_offset,slider_pos);
   gslc_ElemSetVisible(&m_gui,m_pElemBtn_wake_up,false);
@@ -2033,7 +2108,7 @@ void loop()
 
   if (currentMillis - previousMillis_lcd >= interval_lcd) {
     previousMillis_lcd = currentMillis;
-    ledcWrite(0, 240);
+    lcd_set_dim();
     gslc_ElemSetVisible(&m_gui,m_pElemBtn_wake_up,true);
     gslc_ElemSetVisible(&m_gui,m_pElemBtn_wake_up2,true);    
   }

@@ -6,16 +6,29 @@ extern "C" {
 #endif
 
   #define DRV_DISP_TFT_ESPI         // bodmer/TFT_eSPI
+
+#if defined(HARDWARE_CYD)
+  // Configurazione Touch per ESP32-2432S028 (CYD - Cheap Yellow Display)
+  #define DRV_TOUCH_HANDLER         // Touch gestito tramite TouchHandler (VSPI XPT2046 separato)
+  #define ADAGFX_PIN_SDCS     5
+  #define GSLC_ROTATE         1
+
+  // Calibrazione Touch CYD 2.8" XPT2046
+  #define ADATOUCH_X_MIN      300
+  #define ADATOUCH_X_MAX      3800
+  #define ADATOUCH_Y_MIN      300
+  #define ADATOUCH_Y_MAX      3800
+  #define ADATOUCH_REMAP_YX   0
+#else
+  // Configurazione Touch originale per AZ-Touch MOD
   #define DRV_TOUCH_TFT_ESPI        // TFT_eSPI integrated XPT2046 touch driver
   #define DRV_TOUCH_IN_DISP         // Use display driver (TFT_eSPI) for touch events
   #define DRV_TOUCH_TFT_ESPI_FILTER // Enable 5-sample debounce filter on XPT2046 reads
 
   #define ADAGFX_PIN_SDCS     14
-
-  // Set Default rotation of the display (0,1,2,3)
   #define GSLC_ROTATE         1
 
-  // Calibration settings for AZ-Touch MOD XPT2046 (from esp-tftespi-default-xpt2046.h):
+  // Calibration settings for AZ-Touch MOD XPT2046:
   #define ADATOUCH_X_MIN      246
   #define ADATOUCH_X_MAX      3837
   #define ADATOUCH_Y_MIN      3925
@@ -23,13 +36,12 @@ extern "C" {
   #define ADATOUCH_REMAP_YX   0
 
   #define TFT_ESPI_TOUCH_CALIB { 286,3534,283,3600,6 }
+#endif
 
   #define ADATOUCH_PRESS_MIN  400
   #define ADATOUCH_PRESS_MAX  4000
 
   #define DEBUG_ERR           1
-  // IMPORTANTE: NON definire DBG_TOUCH! In GUIslice.c viene controllato con #ifdef DBG_TOUCH
-  // (anche #define DBG_TOUCH 0 lo attiva!) e disegna quadratini gialli 3x3 sullo schermo ad ogni tocco!
   //#define DBG_TOUCH
 
   #define GSLC_FEATURE_COMPOUND       0
