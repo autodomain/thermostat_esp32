@@ -1,97 +1,122 @@
-# Termostato Smart Touch ESP32 (Multi-Piano & Multi-Abitazione)
+# 🌡️ Termostato Smart Touch ESP32 (Multi-Piano & Multi-Abitazione)
 
-Termostato smart avanzato basato su **ESP32**, display TFT a colori **ILI9341 (2.8" / 2.4")** con touchscreen resistivo **XPT2046**, sensore termo-igrometrico/barometrico **BME280** e integrazione nativa **MQTT / Home Assistant Auto-Discovery**.
+Termostato smart avanzato basato su microcontrollore **ESP32**, display TFT a colori **ILI9341 (2.8" / 2.4")** con touchscreen resistivo **XPT2046**, sensore ambientale termo-igrometrico/barometrico **BME280** e integrazione nativa **MQTT / Home Assistant Auto-Discovery**.
 
-Supporta nativamente sia la scheda **CYD (ESP32-2432S028R "Cheap Yellow Display" con porte USB-C e Micro-USB)** sia lo shield industriale **AZ-Touch MOD**.
-
----
-
-## 🌟 Caratteristiche Principali
-
-- **Supporto Hardware Dual-Target (CYD & AZ-Touch)**:
-  - **CYD (ESP32-2432S028R)**: Utilizza due bus SPI hardware indipendenti (**HSPI** per il display ILI9341 a 40 MHz e **VSPI** per il controller touch XPT2046), connettore di espansione **P3** per sensore I2C / Relè esterno, retroilluminazione PWM su GPIO 21 e LED RGB di stato (Rosso=Riscaldamento, Blu=Raffrescamento, Spento=Standby).
-  - **AZ-Touch MOD**: Configurazione classica con display e touch sullo stesso bus SPI, retroilluminazione attiva LOW su GPIO 15, piezo buzzer su GPIO 21 e relè su GPIO 26.
-- **Struttura Flessibile Multi-Immobile & Multi-Zona**:
-  - Supporto per **più abitazioni/edifici** (es. *Casa Principale*, *Villa*, *Appartamento 1*, *Appartamento 2*, *Ufficio*, *B&B*).
-  - Supporto per **qualsiasi numero di piani** (*Seminterrato*, *Piano Terra*, *Primo Piano*, *Mansarda*, ecc.).
-  - Supporto per **più termostati sullo stesso piano** (es. *Soggiorno*, *Cucina*, *Camera Padronale*, *Zona Giorno*, *Zona Notte*).
-  - Generazione automatica e gerarchica dei Topic MQTT (es. `casa/clima/piano_terra/soggiorno/`) con possibilità di personalizzazione libera.
-- **Integrazione Home Assistant Auto-Discovery Completa**:
-  - Entità `climate` principale con modalità *Off*, *Heat*, *Cool* e preset (*Schedule*, *Away/Eco*, *Boost*).
-  - **Assegnazione automatica alle Aree di Home Assistant** (basata su Piano e Stanza).
-  - Sensore di stato caldaia/relè in tempo reale (`binary_sensor`).
-  - Sensori ambientali di precisione: *Temperatura*, *Umidità*, *Pressione Barometrica*, *Punto di Rugiada*, *Previsione Meteo Barometrica & Comfort Termico*.
-  - Statistiche consumi: *Ore di accensione caldaia oggi* e *ultimi 7 giorni*.
-  - Switch diagnostici e di sicurezza: *Protezione Antigelo*, *Rilevamento Finestra Aperta*, *Buzzer Touch*, *Cronotermostato*.
-  - Pulsante di riavvio remoto (`button`) ed entità diagnostiche (`IP`, `Uptime`, `Segnale Wi-Fi`).
-- **Interfaccia Web Indipendente**:
-  - Portale Web integrato responsive con selettori rapidi a pillole per Casa, Piano e Stanza.
-  - Scanner I2C automatico su bus ESP32 con test automatico di 7 coppie di pin GPIO (incluso connettore P3 del CYD) per rilevare e configurare automaticamente il BME280.
-- **Display Locale Touch (GUIslice)**:
-  - Visualizzazione temperatura ambiente, setpoint, meteo, trend barometrico e grafico storico.
-  - Modalità notte con auto-dimming intelligente (risveglio su qualsiasi tocco).
-  - Feedback sonoro acustico configurabile (Muto, Basso/Tick, Medio, Alto).
-- **Funzionalità Avanzate con Flag Abilita/Disabilita (Web UI & Home Assistant)**:
-  - **Isteresi Regolabile**: Isteresi configurabile tra `0.1 °C` e `2.0 °C` (default `0.2 °C`) per prevenire accensioni e spegnimenti troppo frequenti della caldaia o del climatizzatore, con switch di attivazione/disattivazione.
-  - **Protezione Antiblocco Pompa / Valvole**: Ciclo di sblocco automatico settimanale di 60s (ogni mercoledì alle 12:00) per evitare il grippaggio delle valvole o della pompa di circolazione durante i mesi di inattività; include pulsante per test manuale immediato.
-  - **Modalità Notte & Auto-Dimming Programmato**: Spegnimento automatico completo della retroilluminazione nelle ore notturne impostate (es. 23:00 - 06:00), con risveglio immediato per 15 secondi a qualsiasi tocco sullo schermo.
-  - **Blocco Schermo Pulizia (Child Lock)**: Attivabile da Web UI o da Home Assistant per 30 secondi con conto alla rovescia sul display; disabilita i comandi touch per consentire la pulizia del vetro senza modifiche accidentali ai parametri.
-  - **Sensore Finestra Aperta Esterno via MQTT**: Oltre al sensore locale basato su salto termico rapido, consente di agganciare un sensore porta/finestra wireless (es. Zigbee / Zigbee2MQTT / Shelly) tramite topic MQTT configurabile; sospende riscaldamento e raffrescamento a finestra aperta.
-  - **Soglia Antigelo Personalizzabile**: Soglia di sicurezza termica antigelo impostabile tra `3.0 °C` e `10.0 °C` (default `5.0 °C`).
+Supporta in modo trasparente e bivalente sia la scheda **CYD (ESP32-2432S028R "Cheap Yellow Display" con doppie porte USB-C e Micro-USB)** sia lo shield industriale **AZ-Touch MOD 2.8"**.
 
 ---
 
-## 🛠️ Confronto Hardware & Pinout
+## 🌟 Nuova Dashboard Display LCD: 8 Spie di Stato a Colori
 
-### 1. Scheda CYD (ESP32-2432S028R - USB-C & Micro-USB)
+Nella barra superiore del display LCD (da `X=5` a `X=202`, `Y=27..39`), il termostato mostra una **dashboard grafica a 8 indicatori pillole (23x13 px)** con tecnologia **anti-flicker** (aggiornamento mirato e istantaneo in <50ms solo sul badge che varia stato):
 
-Il CYD adotta due bus SPI separati: **HSPI** per il display e **VSPI** per il touch, evitando ogni interferenza sul bus.
+| Spia | Funzione Protetta | Stato Inattivo / Spento | Stato Armato / Abilitato | Stato Allarme / In Corso |
+| :---: | :--- | :--- | :--- | :--- |
+| **`CRN`** | **Cronotermostato Settimanale** | `Navy scuro` (Modo manuale libero) | 🟩 **Verde Brillante** (`#16a34a`) &mdash; Fasce orarie attive | &mdash; |
+| **`GEL`** | **Protezione Antigelo Caldaia** | `Navy scuro` (Disabilitata) | 🟦 **Azzurro Cielo** (`#0284c7`) &mdash; Guardia attiva (&le;5.0 °C) | 🟥 **Rosso Allarme** (`#dc2626`) &mdash; Caldaia forzata ON |
+| **`WIN`** | **Rilevamento Finestra Aperta** | `Navy scuro` (Disabilitato) | 🟩 **Verde Acqua** (`#10b981`) &mdash; Monitoraggio locale / MQTT | 🟧 **Ambra/Arancio** (`#d97706`) &mdash; Finestra aperta (Pausa 20m) |
+| **`PMP`** | **Antiblocco Pompa & Valvole** | `Navy scuro` (Disabilitato) | 🟦 **Ciano Vivo** (`#0891b2`) &mdash; Ciclo settimanale armato | 🟧 **Arancio Fuoco** (`#ea580c`) &mdash; Test sblocco 60s in corso |
+| **`NIT`** | **Modalità Notte & Dimming** | `Navy scuro` (Disabilitata) | 🟪 **Viola** (`#7c3aed`) &mdash; Auto-dimming notturno armato | 🟦 **Blu Notte** (`#4338ca`) &mdash; Fascia notturna (Display spento) |
+| **`IST`** | **Isteresi Dinamica (0.1..2.0°C)** | `Navy scuro` (Isteresi fissa) | 🟩 **Teal / Petrolio** (`#0d9488`) &mdash; Isteresi regolabile attiva | &mdash; |
+| **`BUZ`** | **Feedback Acustico Buzzer** | `Navy scuro` (Muto / Vol. 0) | 🟨 **Giallo Oro** (`#ca8a04`) &mdash; Suono touch attivo (Vol. 1..3) | &mdash; |
+| **`MQT`** | **Broker MQTT / Home Assistant**| `Navy scuro` (Non configurato) | 🟦 **Sky Blue HA** (`#0284c7`) &mdash; Connesso al Broker | 🟥 **Rosso Allarme** (`#dc2626`) &mdash; Configurato ma Disconnesso |
 
-| Funzione | Pin ESP32 (CYD) | Note Hardware |
+---
+
+## 📱 Interfaccia Web Moderna con Card Richiudibili (Accordion)
+
+La pagina web interna (raggiungibile all'IP locale es. `http://192.168.1.150` da qualsiasi smartphone, tablet o PC senza installare app) è organizzata in sezioni ergonomiche a scomparsa:
+
+1. **Card 1 &mdash; Stato Termostato (Sempre Aperta in Alto)**:
+   - Temperatura ambiente, umidità relativa, setpoint desiderato, stato relè caldaia (ON/OFF) e tasti rapidi (+0.1, -0.1, +0.5, -0.5, Eco 18°C, Boost 23°C).
+   - Barra intensità segnale Wi-Fi con indicazione qualitativa (Eccellente, Buono, Debole) e misurazione RSSI in dBm.
+2. **Card 2 &mdash; Programmazione Oraria (Cronotermostato)**:
+   - 8 fasce orarie indipendenti (4 Feriali Lun-Ven, 4 Weekend Sab-Dom) con tasto rapido *Copia Feriali su Weekend*.
+   - 🟢 **Tasto "Salva e Attiva Crono"**: memorizza gli orari e mette subito in funzione la programmazione (spia `CRN` verde).
+   - ⚪ **Tasto "Salva (Solo Manuale)"**: salva gli orari senza attivare il cronotermostato (lascia il controllo manuale libero).
+   - 🟠 **Tasto "Ferma Crono"**: interrompe all'istante la programmazione oraria tornando in manuale con setpoint libero.
+3. **Card 3 &mdash; Meteo Barometrico & Benessere Ambientale**:
+   - Pressione atmosferica con trend a 3 ore, **Punto di Rugiada** (prevenzione condensa e muffe) e indice termico **Humidex**.
+4. **Card 4 &mdash; Funzioni Avanzate & Sicurezza**:
+   - Cursore Isteresi Dinamica (0.1..2.0 °C con switch ON/OFF).
+   - Switch Antiblocco Pompa con pulsante per avviare il test di sblocco 60s.
+   - Switch Modalità Notte con orari di inizio e fine auto-dimming display.
+   - Pulsante *Pulisci Schermo* (Child Lock 30s) per pulire il vetro senza premere tasti accidentali.
+   - Switch e casella Topic per Sensore Finestra Esterno via MQTT (es. sensore magnetico Zigbee / Shelly).
+   - Soglia antigelo personalizzabile da 3.0 a 10.0 °C.
+5. **Card 5 &mdash; Consumi & Storico Caldaia**:
+   - Ore effettive di accensione della caldaia oggi e totale ultimi 7 giorni con tabella storica giorno per giorno.
+6. **Card 6 &mdash; Connessione Wi-Fi**:
+   - Scansione reti Wi-Fi in tempo reale e configurazione guidata con protezione e conservazione dei dati in memoria Flash.
+7. **Card 7 &mdash; Configurazione MQTT & Multi-Immobile / Multi-Piano**:
+   - Selettore rapido a pillole per Abitazione, Piano e Stanza con generazione automatica gerarchica dei Topic.
+
+---
+
+## 🛠️ Confronto Hardware & Pinout Dettagliato
+
+### 1. Scheda CYD (ESP32-2432S028R "Yellow Display")
+
+Il CYD utilizza due bus SPI hardware indipendenti (**HSPI** per il display a 40 MHz e **VSPI** per il touch), garantendo zero conflitti di bus:
+
+| Funzione | Pin ESP32 (CYD) | Note di Collegamento Hardware |
 | :--- | :--- | :--- |
-| **TFT MOSI** | `GPIO 13` | Bus HSPI Display |
-| **TFT MISO** | `GPIO 12` | Bus HSPI Display |
-| **TFT SCLK** | `GPIO 14` | Bus HSPI Display |
-| **TFT CS** | `GPIO 15` | Chip Select Display ILI9341 |
-| **TFT DC** | `GPIO 2` | Data / Command Display |
-| **TFT RST** | `-1` | Connesso al Reset generale dell'ESP32 |
-| **TFT Backlight**| `GPIO 21` | PWM attivo HIGH (0 = spento, 255 = 100%) |
-| **TOUCH CLK** | `GPIO 25` | Bus VSPI Touch XPT2046 dedicato |
-| **TOUCH MISO** | `GPIO 39` | Bus VSPI Touch XPT2046 dedicato |
-| **TOUCH MOSI** | `GPIO 32` | Bus VSPI Touch XPT2046 dedicato |
-| **TOUCH CS** | `GPIO 33` | Chip Select Touch |
-| **TOUCH IRQ** | `GPIO 36` | Interrupt tocco Touchscreen |
-| **Audio / Buzzer** | `GPIO 26` | DAC / Speaker / Buzzer integrato |
-| **LED RGB Rosso** | `GPIO 4` | Onboard RGB LED (attivo LOW, indica Caldo) |
-| **LED RGB Verde** | `GPIO 16` | Onboard RGB LED (attivo LOW) |
-| **LED RGB Blu** | `GPIO 17` | Onboard RGB LED (attivo LOW, indica Freddo) |
-| **Sensore Luce LDR**| `GPIO 34` | Fotoresistenza onboard (ADC1) |
-| **Connettore P3** | `GPIO 22` (SDA), `GPIO 27` (SCL) | Porta JST 4-pin per sensore BME280 / Relè |
+| **Display TFT (HSPI)** | `GPIO 13` (MOSI), `GPIO 12` (MISO), `GPIO 14` (SCK), `GPIO 15` (CS), `GPIO 2` (DC) | Display LCD ILI9341 a colori 320x240 |
+| **Touchscreen (VSPI)** | `GPIO 32` (MOSI), `GPIO 39` (MISO), `GPIO 25` (CLK), `GPIO 33` (CS), `GPIO 36` (IRQ) | Controller resistivo XPT2046 dedicato |
+| **Retroilluminazione LCD**| `GPIO 21` | Pilotaggio PWM attivo HIGH (0 = spento, 255 = 100%) |
+| **Buzzer / Audio** | `GPIO 26` | Uscita speaker/DAC audio integrata |
+| **LED RGB Onboard** | `GPIO 4` (Rosso=Caldo), `GPIO 16` (Verde), `GPIO 17` (Blu=Freddo) | LED di stato integrato (attivo LOW) |
+| **Connettore I2C Sensore**| **Connettore JST CN1 / P3 (1.25mm 4-pin):**<br/>&bull; Pin 1: `GND`<br/>&bull; Pin 2: `3.3V`<br/>&bull; Pin 3: `GPIO 22` (**SDA**)<br/>&bull; Pin 4: `GPIO 27` (**SCL**) | Collegamento per sensore termo-igrometrico/barometrico BME280 |
 
-### 2. Shield AZ-Touch MOD
+### 2. Shield Industriale AZ-Touch MOD 2.8"
 
-| Funzione | Pin ESP32 (AZ-Touch) | Note Hardware |
+| Funzione | Pin ESP32 (AZ-Touch) | Note di Collegamento Hardware |
 | :--- | :--- | :--- |
-| **TFT MOSI / MISO / CLK** | `GPIO 23`, `GPIO 19`, `GPIO 18` | Bus SPI condiviso |
-| **TFT CS / DC / RST** | `GPIO 5`, `GPIO 4`, `GPIO 22` | Controllo Display ILI9341 |
-| **TOUCH CS** | `GPIO 14` | Chip Select Touch XPT2046 |
-| **TFT Backlight** | `GPIO 15` | PWM attivo LOW (0 = 100%, 255 = spento) |
-| **Buzzer** | `GPIO 21` | Piezo buzzer integrato |
-| **Relè Locale** | `GPIO 26` | Relè a bordo shield |
-| **I2C SDA / SCL** | `GPIO 17`, `GPIO 16` | Header I2C per BME280 |
+| **Display TFT & Touch** | `GPIO 23` (MOSI), `GPIO 19` (MISO), `GPIO 18` (SCK), `GPIO 5` (TFT CS), `GPIO 4` (DC), `GPIO 14` (Touch CS) | Bus SPI condiviso |
+| **Retroilluminazione LCD**| `GPIO 15` | Pilotaggio PWM attivo LOW (0 = 100%, 255 = spento) |
+| **Relè Locale Caldaia** | `GPIO 26` | Relè a bordo scheda a contatto pulito |
+| **Buzzer** | `GPIO 21` | Piezo buzzer integrato su scheda |
+| **Morsetti I2C Sensore**| `GPIO 17` (**SDA**), `GPIO 16` (**SCL**), `3.3V`, `GND` | Morsettiera a vite a bordo shield |
 
 ---
 
-## 🚀 Compilazione e Caricamento con PlatformIO
+## 📡 Integrazione Home Assistant (MQTT Auto-Discovery)
 
-Il file `platformio.ini` include gli ambienti preconfigurati per entrambe le piattaforme:
+All'avvio e ad ogni riconnessione, il termostato pubblica i descrittori di Auto-Discovery: in Home Assistant compare automaticamente il dispositivo completo associato all'Area (Piano e Stanza) di competenza:
+
+| Entità Home Assistant | Tipo | Descrizione |
+| :--- | :--- | :--- |
+| `climate.termostato_<stanza>` | Termostato | Modalità (*Off*, *Heat*, *Cool*) e Preset (*Schedule*, *Away/Eco*, *Boost*) |
+| `switch.termostato_<stanza>_crono` | Switch | Attivazione/disattivazione programmazione settimanale |
+| `switch.termostato_<stanza>_antifrost` | Switch | Attivazione sorveglianza antigelo |
+| `number.termostato_<stanza>_antifrost_th` | Cursore | Regolazione soglia emergenza antigelo (3.0..10.0 °C) |
+| `switch.termostato_<stanza>_openwin` | Switch | Rilevamento caduta termica rapida finestra aperta |
+| `switch.termostato_<stanza>_ext_window` | Switch | Abilitazione sensore magnetico finestra wireless MQTT |
+| `switch.termostato_<stanza>_hysteresis` | Switch | Abilitazione isteresi dinamica |
+| `number.termostato_<stanza>_hysteresis_val` | Cursore | Valore isteresi (0.1..2.0 °C) |
+| `switch.termostato_<stanza>_pump_prot` | Switch | Protezione antiblocco settimanale pompa |
+| `button.termostato_<stanza>_pump_test` | Pulsante | Avvio immediato test pompa 60 secondi |
+| `switch.termostato_<stanza>_night_mode` | Switch | Modalità notte con auto-dimming programmato |
+| `button.termostato_<stanza>_clean_screen` | Pulsante | Blocco schermo 30 secondi per pulizia |
+| `sensor.termostato_<stanza>_ore_oggi` | Sensore | Ore di lavoro caldaia oggi |
+| `sensor.termostato_<stanza>_ore_7gg` | Sensore | Ore di lavoro caldaia ultimi 7 giorni |
+| `sensor.termostato_<stanza>_temperatura` | Sensore | Temperatura ambiente (°C) |
+| `sensor.termostato_<stanza>_umidita` | Sensore | Umidità relativa (%) |
+| `sensor.termostato_<stanza>_pressione` | Sensore | Pressione barometrica (hPa) |
+| `sensor.termostato_<stanza>_rugiada` | Sensore | Punto di rugiada (°C) |
+| `sensor.termostato_<stanza>_wifi_signal` | Sensore | Qualità segnale Wi-Fi (%) con RSSI (dBm) |
+| `button.termostato_<stanza>_reboot` | Pulsante | Riavvio da remoto del termostato |
+
+---
+
+## 🚀 Compilazione e Flash con PlatformIO
 
 ```bash
-# Per compilare e caricare su Scheda CYD (Default):
+# Compilazione ed upload su scheda CYD (default):
 pio run -e cyd
-pio run -e cyd -t upload
+pio run -e cyd -t upload --upload-port COM5
 
-# Per compilare e caricare su AZ-Touch MOD:
+# Compilazione ed upload su shield AZ-Touch MOD:
 pio run -e az_touch
 pio run -e az_touch -t upload
 
@@ -101,43 +126,17 @@ pio device monitor -b 115200
 
 ---
 
-## 📡 Topic MQTT Supportati
+## 📖 Manuale Utente Completo in PDF
 
-Se il topic base generato è ad esempio `casa/clima/piano_terra/soggiorno/`:
-
-| Topic | Tipo | Valori / Payload |
-| :--- | :--- | :--- |
-| `.../temperature/get` | Telemetria | Temperatura attuale (°C) |
-| `.../humidity/get` | Telemetria | Umidità relativa (%) |
-| `.../pressure/get` | Telemetria | Pressione atmosferica (hPa) |
-| `.../temperature/target` | Stato | Setpoint impostato (°C) |
-| `.../temperature/set` | Comando | Imposta setpoint (es. `20.5`) |
-| `.../mode/get` | Stato | `off`, `heat`, `cool` |
-| `.../mode/set` | Comando | `off`, `heat`, `cool` |
-| `.../preset/get` | Stato | `none`, `schedule`, `away`, `boost` |
-| `.../preset/set` | Comando | `none`, `schedule`, `away`, `boost` |
-| `.../relay/state` | Stato | `ON`, `OFF` (stato caldaia) |
-| `.../hysteresis/get` | Stato | `ON`, `OFF` (abilitazione isteresi) |
-| `.../hysteresis/set` | Comando | `ON`, `OFF` |
-| `.../hysteresis_val/get` | Stato | Valore isteresi (es. `0.2`) |
-| `.../hysteresis_val/set` | Comando | Imposta isteresi (0.1..2.0 °C) |
-| `.../pump_prot/get` | Stato | `ON`, `OFF` (protezione pompa) |
-| `.../pump_prot/set` | Comando | `ON`, `OFF` |
-| `.../pump_test/set` | Comando | `PRESS` (avvia test pompa 60s) |
-| `.../night_mode/get` | Stato | `ON`, `OFF` (modalità notte) |
-| `.../night_mode/set` | Comando | `ON`, `OFF` |
-| `.../clean_screen/set`| Comando | `PRESS` (avvia blocco pulizia 30s) |
-| `.../clean_screen/state`| Stato | `ON` (bloccato), `OFF` (normale) |
-| `.../ext_win_en/get` | Stato | `ON`, `OFF` (finestra esterna) |
-| `.../ext_win_en/set` | Comando | `ON`, `OFF` |
-| `.../ext_win/state` | Stato | `ON` (aperta), `OFF` (chiusa) |
-| `.../antifrost_th/get`| Stato | Soglia antigelo (es. `5.0`) |
-| `.../antifrost_th/set`| Comando | Imposta soglia antigelo (3.0..10.0 °C) |
-| `.../reboot/set` | Comando | `PRESS` (riavvia ESP32 da remoto) |
-| `.../status` | LWT | `online`, `offline` |
+È disponibile il manuale d'uso ufficiale a colori pronto per la stampa in formato A4:
+- File generato: [`Manuale_Istruzioni_Termostato_Smart.pdf`](./Manuale_Istruzioni_Termostato_Smart.pdf)
+- Per rigenerare il PDF con Python e ReportLab:
+  ```bash
+  python generate_manual_pdf.py
+  ```
 
 ---
 
 ## 📄 Licenza
 
-Progetto rilasciato sotto licenza MIT. Sviluppato e manutenuto da AutoDomain.
+Distribuito sotto licenza MIT. Progetto sviluppato e manutenuto da AutoDomain.
