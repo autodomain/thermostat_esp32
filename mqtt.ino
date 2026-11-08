@@ -1,3 +1,5 @@
+void update_indicator_spie(bool force_redraw);
+
 unsigned long previousMillis_mqtt = 0;
 const unsigned long interval_mqtt_retry = 10000;
 
@@ -16,6 +18,7 @@ const char* get_ha_action_str() {
 }
 
 void publish_ha_state() {
+  update_indicator_spie(false);
   if (!client.connected()) return;
   char topic[96];
   char buf[16];

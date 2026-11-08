@@ -307,6 +307,7 @@ void update_weather_and_comfort(float t, float h, float p);
 void play_beep(int freq = 2600, int duration_ms = 25);
 void evaluate_crono(bool force_apply = false);
 void update_wifi_signal_bars();
+void update_indicator_spie(bool force_redraw = false);
 
 // ------------------------------------------------
 // Headers to include
@@ -469,6 +470,8 @@ bool CbBtnCommon(void* pvGui,void *pvElemRef,gslc_teTouch eTouch,int16_t nX,int1
         gslc_ElemSetVisible(&m_gui,m_pElemBtn_wake_up2,false);
         play_beep(2600, 25);
         gslc_SetPageCur(&m_gui,E_PG_MAIN);
+        update_wifi_signal_bars();
+        update_indicator_spie(true);
         break;
       case E_ELEM_BTN10:
         play_beep(2000, 80);
@@ -1053,6 +1056,96 @@ void update_wifi_signal_bars() {
   }
 }
 
+void draw_spia_badge(int16_t x, int16_t y, uint16_t w, uint16_t h, const char* label, gslc_tsColor bgCol, gslc_tsColor frameCol, gslc_tsColor txtCol) {
+  gslc_tsRect r = (gslc_tsRect){x, y, w, h};
+  gslc_DrawFillRoundRect(&m_gui, r, 2, bgCol);
+  gslc_DrawFrameRoundRect(&m_gui, r, 2, frameCol);
+  gslc_DrawTxtBase(&m_gui, (char*)label, r, gslc_FontGet(&m_gui, E_BUILTIN5X8),
+                   (gslc_teTxtFlags)(GSLC_TXT_MEM_RAM | GSLC_TXT_ALLOC_EXT),
+                   GSLC_ALIGN_MID_MID, txtCol, bgCol, 0, 0);
+}
+
+void update_indicator_spie(bool force_redraw) {
+  if (gslc_GetPageCur(&m_gui) != E_PG_MAIN) return;
+
+  static uint8_t last_spia_state[8] = {255, 255, 255, 255, 255, 255, 255, 255};
+  if (force_redraw) {
+    for (int i = 0; i < 8; i++) last_spia_state[i] = 255;
+  }
+
+  uint8_t cur_state[8];
+  // 0: CRN (Crono settimanale)
+  cur_state[0] = crono_enabled ? 1 : 0;
+  // 1: GEL (Protezione antigelo)
+  cur_state[1] = antifrost_active ? 2 : (antifrost_enabled ? 1 : 0);
+  // 2: WIN (Rilevamento finestre aperte)
+  cur_state[2] = open_window_active ? 2 : ((open_window_enabled || ext_window_enabled) ? 1 : 0);
+  // 3: PMP (Antiblocco pompa)
+  cur_state[3] = pump_test_active ? 2 : (pump_protection_enabled ? 1 : 0);
+  // 4: NIT (Modalita notte)
+  cur_state[4] = night_active ? 2 : (night_mode_enabled ? 1 : 0);
+  // 5: IST (Isteresi regolabile)
+  cur_state[5] = hysteresis_enabled ? 1 : 0;
+  // 6: BUZ (Feedback buzzer)
+  cur_state[6] = (buzzer_enabled && buzzer_vol > 0) ? 1 : 0;
+  // 7: MQT (Broker MQTT / HA)
+  cur_state[7] = client.connected() ? 2 : ((strlen(mqtt_server) > 0) ? 1 : 0);
+
+  const gslc_tsColor col_off_bg    = {10, 35, 65};   // Navy scuro per badge inattivo
+  const gslc_tsColor col_off_frame = {22, 52, 85};   // Bordo tenue
+  const gslc_tsColor col_off_txt   = {70, 95, 125};  // Testo attenuato
+  const gslc_tsColor col_txt_white = {255, 255, 255};
+
+  int16_t start_x = 5;
+  int16_t y = 27;
+  uint16_t w = 23;
+  uint16_t h = 13;
+  int16_t step_x = 25; // 23px larghezza + 2px spaziatura
+
+  static const char* const labels[8] = {"CRN", "GEL", "WIN", "PMP", "NIT", "IST", "BUZ", "MQT"};
+
+  for (int i = 0; i < 8; i++) {
+    if (cur_state[i] == last_spia_state[i]) continue;
+    last_spia_state[i] = cur_state[i];
+
+    gslc_tsColor bg = col_off_bg, fr = col_off_frame, tx = col_off_txt;
+
+    switch (i) {
+      case 0: // CRN
+        if (cur_state[0] == 1) { bg = {22, 163, 74}; fr = {74, 222, 128}; tx = col_txt_white; }
+        break;
+      case 1: // GEL
+        if (cur_state[1] == 2) { bg = {220, 38, 38}; fr = {248, 113, 113}; tx = col_txt_white; }
+        else if (cur_state[1] == 1) { bg = {2, 132, 199}; fr = {56, 189, 248}; tx = col_txt_white; }
+        break;
+      case 2: // WIN
+        if (cur_state[2] == 2) { bg = {217, 119, 6}; fr = {251, 191, 36}; tx = col_txt_white; }
+        else if (cur_state[2] == 1) { bg = {16, 149, 106}; fr = {52, 211, 153}; tx = col_txt_white; }
+        break;
+      case 3: // PMP
+        if (cur_state[3] == 2) { bg = {234, 88, 12}; fr = {253, 186, 116}; tx = col_txt_white; }
+        else if (cur_state[3] == 1) { bg = {8, 145, 178}; fr = {34, 211, 238}; tx = col_txt_white; }
+        break;
+      case 4: // NIT
+        if (cur_state[4] == 2) { bg = {67, 56, 202}; fr = {129, 140, 248}; tx = col_txt_white; }
+        else if (cur_state[4] == 1) { bg = {109, 40, 217}; fr = {167, 139, 250}; tx = col_txt_white; }
+        break;
+      case 5: // IST
+        if (cur_state[5] == 1) { bg = {13, 148, 136}; fr = {45, 212, 191}; tx = col_txt_white; }
+        break;
+      case 6: // BUZ
+        if (cur_state[6] == 1) { bg = {202, 138, 4}; fr = {250, 204, 21}; tx = col_txt_white; }
+        break;
+      case 7: // MQT
+        if (cur_state[7] == 2) { bg = {3, 105, 161}; fr = {56, 189, 248}; tx = col_txt_white; }
+        else if (cur_state[7] == 1) { bg = {185, 28, 28}; fr = {239, 68, 68}; tx = col_txt_white; }
+        break;
+    }
+
+    draw_spia_badge(start_x + i * step_x, y, w, h, labels[i], bg, fr, tx);
+  }
+}
+
 void printLocalTime()
 {
   struct tm timeinfo;
@@ -1061,6 +1154,7 @@ void printLocalTime()
       gslc_ElemSetTxtStr(&m_gui,m_pElemOutTxt_Date,"Termostato_AP");
     }
     update_wifi_signal_bars();
+    update_indicator_spie();
     return;
   }
 
@@ -1074,6 +1168,7 @@ void printLocalTime()
   gslc_ElemSetTxtStr(&m_gui,m_pElemOutTxt_Time,timeStringBuff);
   evaluate_crono(false);
   update_wifi_signal_bars();
+  update_indicator_spie();
 }
 
 void start_ap_portal() {
@@ -2357,6 +2452,8 @@ void setup()
   if (WiFi.status() == WL_CONNECTED) {
     ArduinoOTA.begin();
   }
+  update_wifi_signal_bars();
+  update_indicator_spie(true);
   previousMillis_lcd = millis();
 }
 
@@ -2426,6 +2523,7 @@ void loop()
     if (bme_ok) {
       track_open_window(averageValueT.average());
     }
+    update_indicator_spie();
     if (client.connected()) {
       char myConcatenation[80];
       snprintf(myConcatenation, sizeof(myConcatenation), "%stemperature/target", thermostat_id);
