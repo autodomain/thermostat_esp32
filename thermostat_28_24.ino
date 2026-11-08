@@ -1461,7 +1461,11 @@ void handleRoot() {
   html += "</div></div>";
 
   // Card 1-Crono: Programmazione Oraria Giornaliera / Settimanale (Cronotermostato)
+  String cronoStatusBadge = crono_enabled 
+    ? "<span style='color:#4ade80;'><b>ATTIVO (Programmazione Oraria)</b></span>" 
+    : "<span style='color:#fde047;'><b>DISATTIVATO (Termostato Manuale)</b></span>";
   html += "<details class='card' id='crono-box'><summary><h3>&#128197; Programmazione Oraria Settimanale (Cronotermostato)</h3></summary>";
+  html += "<div style='margin:4px 0 8px 0;font-size:13px;'>Stato Attuale: " + cronoStatusBadge + "</div>";
   html += "<p style='margin:4px 0 10px 0;font-size:13px;color:#93c5fd;'>Imposta le 4 fasce orarie giornaliere per <b>Giorni Feriali (Lun&ndash;Ven)</b> e <b>Weekend (Sab&ndash;Dom)</b>. Collegato con Home Assistant (Preset <code>schedule</code>).</p>";
   html += "<form method='POST' action='/crono'>";
   for (int d = 0; d < 2; d++) {
@@ -1484,8 +1488,15 @@ void handleRoot() {
   }
   html += "<div class='btn-row'>";
   html += "<button type='button' style='background:#475569;flex:1;font-size:13px;' onclick=\"for(var s=0;s<4;s++){document.getElementById('t1_'+s).value=document.getElementById('t0_'+s).value;document.getElementById('sp1_'+s).value=document.getElementById('sp0_'+s).value;}\">Copia Feriali su Weekend</button>";
-  html += "<button type='submit' style='background:#16a34a;flex:1.5;'>Salva Programmazione &amp; Attiva Crono</button>";
-  html += "</div></form></details>";
+  html += "<button type='submit' name='action' value='save_activate' style='background:#16a34a;flex:1.2;font-size:13px;'>&#10004; Salva &amp; Attiva Crono</button>";
+  html += "<button type='submit' name='action' value='save_manual' style='background:#0284c7;flex:1.2;font-size:13px;'>&#128190; Salva (Solo Manuale)</button>";
+  html += "</div>";
+  if (crono_enabled) {
+    html += "<div style='margin-top:8px;'><a class='btn' style='display:block;padding:9px;background:#dc2626;font-size:13px;' href='/ctrl?crono=0#crono-box'>&#9209; Ferma Crono e passa a Termostato Manuale</a></div>";
+  } else {
+    html += "<div style='margin-top:8px;'><a class='btn' style='display:block;padding:9px;background:#16a34a;font-size:13px;' href='/ctrl?crono=1#crono-box'>&#9654; Attiva Cronotermostato</a></div>";
+  }
+  html += "</form></details>";
 
   // Card 1-Smart: Protezione Antigelo, Finestra Aperta e Ore di Accensione Caldaia
   html += "<details class='card' id='smart-box'><summary><h3>&#128293; Sicurezza &amp; Consumi Caldaia</h3></summary>";
@@ -1985,8 +1996,16 @@ void setup_web_server() {
         }
       }
     }
-    crono_enabled = true;
-    current_preset_mode = "schedule";
+    bool activate = true;
+    if (webServer.hasArg("action") && webServer.arg("action") == "save_manual") {
+      activate = false;
+    }
+    crono_enabled = activate;
+    if (activate) {
+      current_preset_mode = "schedule";
+    } else {
+      current_preset_mode = "none";
+    }
     save_json_config();
     save_state_eeprom();
     evaluate_crono(true);
