@@ -31,6 +31,13 @@ Supporta nativamente sia la scheda **CYD (ESP32-2432S028R "Cheap Yellow Display"
   - Visualizzazione temperatura ambiente, setpoint, meteo, trend barometrico e grafico storico.
   - Modalità notte con auto-dimming intelligente (risveglio su qualsiasi tocco).
   - Feedback sonoro acustico configurabile (Muto, Basso/Tick, Medio, Alto).
+- **Funzionalità Avanzate con Flag Abilita/Disabilita (Web UI & Home Assistant)**:
+  - **Isteresi Regolabile**: Isteresi configurabile tra `0.1 °C` e `2.0 °C` (default `0.2 °C`) per prevenire accensioni e spegnimenti troppo frequenti della caldaia o del climatizzatore, con switch di attivazione/disattivazione.
+  - **Protezione Antiblocco Pompa / Valvole**: Ciclo di sblocco automatico settimanale di 60s (ogni mercoledì alle 12:00) per evitare il grippaggio delle valvole o della pompa di circolazione durante i mesi di inattività; include pulsante per test manuale immediato.
+  - **Modalità Notte & Auto-Dimming Programmato**: Spegnimento automatico completo della retroilluminazione nelle ore notturne impostate (es. 23:00 - 06:00), con risveglio immediato per 15 secondi a qualsiasi tocco sullo schermo.
+  - **Blocco Schermo Pulizia (Child Lock)**: Attivabile da Web UI o da Home Assistant per 30 secondi con conto alla rovescia sul display; disabilita i comandi touch per consentire la pulizia del vetro senza modifiche accidentali ai parametri.
+  - **Sensore Finestra Aperta Esterno via MQTT**: Oltre al sensore locale basato su salto termico rapido, consente di agganciare un sensore porta/finestra wireless (es. Zigbee / Zigbee2MQTT / Shelly) tramite topic MQTT configurabile; sospende riscaldamento e raffrescamento a finestra aperta.
+  - **Soglia Antigelo Personalizzabile**: Soglia di sicurezza termica antigelo impostabile tra `3.0 °C` e `10.0 °C` (default `5.0 °C`).
 
 ---
 
@@ -110,6 +117,22 @@ Se il topic base generato è ad esempio `casa/clima/piano_terra/soggiorno/`:
 | `.../preset/get` | Stato | `none`, `schedule`, `away`, `boost` |
 | `.../preset/set` | Comando | `none`, `schedule`, `away`, `boost` |
 | `.../relay/state` | Stato | `ON`, `OFF` (stato caldaia) |
+| `.../hysteresis/get` | Stato | `ON`, `OFF` (abilitazione isteresi) |
+| `.../hysteresis/set` | Comando | `ON`, `OFF` |
+| `.../hysteresis_val/get` | Stato | Valore isteresi (es. `0.2`) |
+| `.../hysteresis_val/set` | Comando | Imposta isteresi (0.1..2.0 °C) |
+| `.../pump_prot/get` | Stato | `ON`, `OFF` (protezione pompa) |
+| `.../pump_prot/set` | Comando | `ON`, `OFF` |
+| `.../pump_test/set` | Comando | `PRESS` (avvia test pompa 60s) |
+| `.../night_mode/get` | Stato | `ON`, `OFF` (modalità notte) |
+| `.../night_mode/set` | Comando | `ON`, `OFF` |
+| `.../clean_screen/set`| Comando | `PRESS` (avvia blocco pulizia 30s) |
+| `.../clean_screen/state`| Stato | `ON` (bloccato), `OFF` (normale) |
+| `.../ext_win_en/get` | Stato | `ON`, `OFF` (finestra esterna) |
+| `.../ext_win_en/set` | Comando | `ON`, `OFF` |
+| `.../ext_win/state` | Stato | `ON` (aperta), `OFF` (chiusa) |
+| `.../antifrost_th/get`| Stato | Soglia antigelo (es. `5.0`) |
+| `.../antifrost_th/set`| Comando | Imposta soglia antigelo (3.0..10.0 °C) |
 | `.../reboot/set` | Comando | `PRESS` (riavvia ESP32 da remoto) |
 | `.../status` | LWT | `online`, `offline` |
 

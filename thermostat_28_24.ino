@@ -41,6 +41,7 @@
   #define TFT_BL_PIN         21    // Retroilluminazione CYD (GPIO 21, attivo HIGH)
   #define TFT_BL_BRIGHT      255
   #define TFT_BL_DIM         15
+  #define TFT_BL_OFF         0
 #else
   #define BUZZER_PIN         21    // Piezo buzzer su AZ-Touch (GPIO 21)
   #define I2C_SDA            17    // SDA su AZ-Touch
@@ -49,6 +50,7 @@
   #define TFT_BL_PIN         15    // Retroilluminazione AZ-Touch (GPIO 15, attivo LOW)
   #define TFT_BL_BRIGHT      0
   #define TFT_BL_DIM         240
+  #define TFT_BL_OFF         255
 #endif
 
 
@@ -212,6 +214,35 @@ int current_day_of_year = -1;
 unsigned long last_runtime_check_ms = 0;
 unsigned long last_runtime_save_ms = 0;
 
+// 4. Isteresi Regolabile
+bool hysteresis_enabled = true;
+float hysteresis_val = 0.2f;
+
+// 5. Protezione Antiblocco Pompa / Valvole (Anti-Seize)
+bool pump_protection_enabled = true;
+unsigned long last_relay_active_time = 0;
+bool pump_test_active = false;
+unsigned long pump_test_end_ms = 0;
+int last_pump_test_yday = -1;
+
+// 6. Modalità Notte & Auto-Dimming Programmato
+bool night_mode_enabled = false;
+int night_start_hour = 23; // 23:00
+int night_end_hour   = 6;  // 06:00
+bool night_active = false;
+unsigned long night_wake_until_ms = 0;
+
+// 7. Blocco Pulizia / Child Lock
+bool child_lock_active = false;
+unsigned long child_lock_until_ms = 0;
+
+// 8. Sensore Finestra Aperta Esterno via MQTT
+bool ext_window_enabled = false;
+char ext_window_topic[100] = "";
+bool ext_window_open = false;
+
+void trigger_child_lock(uint32_t seconds = 30);
+void trigger_pump_test(uint32_t seconds = 60);
 
 struct CronoSlot {
   uint16_t start_min; // minuti da mezzanotte (es. 06:30 = 390)
@@ -290,6 +321,26 @@ inline void lcd_set_dim() {
   ledcWrite(0, TFT_BL_DIM);
 }
 
+inline void lcd_set_off() {
+  ledcWrite(0, TFT_BL_OFF);
+}
+
+void trigger_child_lock(uint32_t seconds) {
+  child_lock_active = true;
+  child_lock_until_ms = millis() + (seconds * 1000UL);
+  publish_ha_state();
+  play_beep(2400, 50);
+}
+
+void trigger_pump_test(uint32_t seconds) {
+  pump_test_active = true;
+  pump_test_end_ms = millis() + (seconds * 1000UL);
+  digitalWrite(rele_pin, HIGH);
+  publish_ha_state();
+  play_beep(2800, 60);
+  Serial.printf("Protezione antiblocco: avviato test pompa per %u secondi\n", seconds);
+}
+
 // ------------------------------------------------
 // Program Globals
 // ------------------------------------------------
@@ -343,6 +394,22 @@ bool CbBtnCommon(void* pvGui,void *pvElemRef,gslc_teTouch eTouch,int16_t nX,int1
   char myConc[80];
   char myChar_[19]="mode/get";
   snprintf(myConc, sizeof(myConc), "%s%s", thermostat_id, myChar_);
+
+  if (night_active) {
+    night_wake_until_ms = millis() + 15000UL;
+  }
+
+  if (child_lock_active) {
+    if (millis() < child_lock_until_ms) {
+      previousMillis_lcd = millis();
+      lcd_set_bright();
+      return true;
+    } else {
+      child_lock_active = false;
+      publish_ha_state();
+      play_beep(2600, 35);
+    }
+  }
 
   if ( eTouch == GSLC_TOUCH_UP_IN ) {
     // From the element's ID we can determine which button was pressed.
@@ -529,7 +596,16 @@ void save_json_config() {
   json["buzzer"]        = buzzer_enabled ? buzzer_vol : 0;
   json["crono"]         = crono_enabled ? 1 : 0;
   json["antifrost"]     = antifrost_enabled ? 1 : 0;
+  json["antifrost_sp"]  = round(antifrost_temp_threshold * 10.0f) / 10.0f;
   json["openwin"]       = open_window_enabled ? 1 : 0;
+  json["hyst_en"]       = hysteresis_enabled ? 1 : 0;
+  json["hyst_val"]      = round(hysteresis_val * 10.0f) / 10.0f;
+  json["pump_prot"]     = pump_protection_enabled ? 1 : 0;
+  json["night_en"]      = night_mode_enabled ? 1 : 0;
+  json["night_start"]   = night_start_hour;
+  json["night_end"]     = night_end_hour;
+  json["ext_win_en"]    = ext_window_enabled ? 1 : 0;
+  json["ext_win_top"]   = ext_window_topic;
 
   JsonArray sched = json.createNestedArray("sched");
   for (int d = 0; d < 2; d++) {
@@ -1407,11 +1483,11 @@ void handleRoot() {
 
   // Indicatori di stato Antigelo e Finestra Aperta
   String antiStr = antifrost_enabled ? (antifrost_active ? "<span style='color:#f87171'><b>IN ALLARME (Acceso!)</b></span>" : "<span style='color:#4ade80'>Attivo (OK)</span>") : "<span style='color:#94a3b8'>Disabilitato</span>";
-  String winStr = open_window_enabled ? (open_window_active ? "<span style='color:#facc15'><b>APERTA (Pausa!)</b></span>" : "<span style='color:#4ade80'>Attivo (OK)</span>") : "<span style='color:#94a3b8'>Disabilitato</span>";
+  String winStr = (open_window_enabled || ext_window_enabled) ? ((open_window_active || ext_window_open) ? "<span style='color:#facc15'><b>APERTA (Pausa!)</b></span>" : "<span style='color:#4ade80'>Attivo (OK)</span>") : "<span style='color:#94a3b8'>Disabilitato</span>";
 
   html += "<div style='margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;'>";
   html += "<div style='flex:1;background:#0b2545;padding:8px;border-radius:6px;font-size:13px;'>";
-  html += "<b>Antigelo (Soglia 5.0&deg;C):</b> " + antiStr + "<br>";
+  html += "<b>Antigelo (Soglia " + String(antifrost_temp_threshold, 1) + "&deg;C):</b> " + antiStr + "<br>";
   html += "<a class='btn' style='display:inline-block;padding:4px 8px;font-size:11px;margin-top:4px;background:#334155;' href='/ctrl?antifrost=" + String(antifrost_enabled ? 0 : 1) + "'>" + (antifrost_enabled ? "Disabilita" : "Abilita") + "</a>";
   html += "</div>";
 
@@ -1419,6 +1495,84 @@ void handleRoot() {
   html += "<b>Rilevamento Finestra:</b> " + winStr + "<br>";
   html += "<a class='btn' style='display:inline-block;padding:4px 8px;font-size:11px;margin-top:4px;background:#334155;' href='/ctrl?openwin=" + String(open_window_enabled ? 0 : 1) + "'>" + (open_window_enabled ? "Disabilita" : "Abilita") + "</a>";
   html += "</div></div></div>";
+
+  // Card 2A: Funzionalità Avanzate & Protezioni Impianto
+  html += "<div class='card' id='adv-box'><h3>Funzionalit&agrave; Avanzate &amp; Protezioni Impianto</h3>";
+  html += "<p style='margin:4px 0 12px 0;font-size:13px;color:#93c5fd;'>Configura le protezioni intelligenti, isteresi dinamica, modalit&agrave; notte, blocco pulizia e sensori esterni.</p>";
+
+  // 1. Isteresi
+  String hystStatus = hysteresis_enabled ? ("<span style='color:#4ade80'>ATTIVA (&plusmn;" + String(hysteresis_val, 1) + " &deg;C)</span>") : "<span style='color:#94a3b8'>DISABILITATA (0.05 &deg;C)</span>";
+  html += "<div style='background:#0b2545;padding:10px;border-radius:8px;margin-bottom:10px;'>";
+  html += "<div style='display:flex;justify-content:space-between;align-items:center;'>";
+  html += "<b>1. Isteresi di Commutazione:</b> " + hystStatus;
+  html += "<a class='btn' style='padding:5px 10px;font-size:12px;background:" + String(hysteresis_enabled ? "#dc2626" : "#16a34a") + ";' href='/ctrl?hyst_en=" + String(hysteresis_enabled ? 0 : 1) + "#adv-box'>" + (hysteresis_enabled ? "Disabilita" : "Abilita") + "</a>";
+  html += "</div>";
+  html += "<p style='font-size:12px;color:#8da9c4;margin:4px 0 8px 0;'>Evita accensioni e spegnimenti continui della caldaia attorno alla temperatura di setpoint.</p>";
+  html += "<div style='display:flex;gap:6px;align-items:center;flex-wrap:wrap;'>";
+  html += "<span style='font-size:12px;color:#cbd5e1;'>Valore Rapido:</span>";
+  float hvals[] = {0.1f, 0.2f, 0.3f, 0.5f, 1.0f};
+  for (int hi = 0; hi < 5; hi++) {
+    bool isSel = (hysteresis_enabled && fabs(hysteresis_val - hvals[hi]) < 0.05f);
+    html += "<a class='btn' style='padding:4px 8px;font-size:12px;background:" + String(isSel ? "#0284c7" : "#334155") + ";' href='/ctrl?hyst_val=" + String(hvals[hi], 1) + "#adv-box'>&plusmn;" + String(hvals[hi], 1) + " &deg;C</a>";
+  }
+  html += "</div></div>";
+
+  // 2. Protezione Antiblocco Pompa
+  String pumpStatus = pump_protection_enabled ? "<span style='color:#4ade80'>ATTIVA (Test 60s ogni Mercoled&igrave; ore 12)</span>" : "<span style='color:#94a3b8'>DISABILITATA</span>";
+  html += "<div style='background:#0b2545;padding:10px;border-radius:8px;margin-bottom:10px;'>";
+  html += "<div style='display:flex;justify-content:space-between;align-items:center;'>";
+  html += "<b>2. Protezione Antiblocco Pompa / Valvole:</b> " + pumpStatus;
+  html += "<a class='btn' style='padding:5px 10px;font-size:12px;background:" + String(pump_protection_enabled ? "#dc2626" : "#16a34a") + ";' href='/ctrl?pump_prot=" + String(pump_protection_enabled ? 0 : 1) + "#adv-box'>" + (pump_protection_enabled ? "Disabilita" : "Abilita") + "</a>";
+  html += "</div>";
+  html += "<p style='font-size:12px;color:#8da9c4;margin:4px 0 8px 0;'>Fa circolare l'acqua per 60 secondi in caso di inattivit&agrave; prolungata (es. d'estate), evitando il blocco meccanico della pompa.</p>";
+  html += "<div class='btn-row'><a class='btn' style='padding:8px;flex:1;background:#0284c7;font-size:13px;' href='/ctrl?pump_test=1#adv-box'>&#9654; Avvia Test Pompa Subito (60 secondi)</a></div>";
+  html += "</div>";
+
+  // 3. Modalità Notte & Auto-Dimming
+  String nightStatus = night_mode_enabled ? ("<span style='color:#4ade80'>ATTIVA (" + String(night_start_hour) + ":00 - " + String(night_end_hour) + ":00)</span>") : "<span style='color:#94a3b8'>DISABILITATA</span>";
+  html += "<div style='background:#0b2545;padding:10px;border-radius:8px;margin-bottom:10px;'>";
+  html += "<div style='display:flex;justify-content:space-between;align-items:center;'>";
+  html += "<b>3. Modalit&agrave; Notte (Auto-Dimming Orario):</b> " + nightStatus;
+  html += "<a class='btn' style='padding:5px 10px;font-size:12px;background:" + String(night_mode_enabled ? "#dc2626" : "#16a34a") + ";' href='/ctrl?night_en=" + String(night_mode_enabled ? 0 : 1) + "#adv-box'>" + (night_mode_enabled ? "Disabilita" : "Abilita") + "</a>";
+  html += "</div>";
+  html += "<p style='font-size:12px;color:#8da9c4;margin:4px 0 8px 0;'>Spegne completamente lo schermo durante le ore di sonno; basta toccare lo schermo per riattivarlo per 15s.</p>";
+  html += "</div>";
+
+  // 4. Blocco Pulizia / Child Lock
+  String lockStatus = child_lock_active ? ("<span style='color:#facc15'>ATTIVO (Termina tra " + String((child_lock_until_ms - millis()) / 1000) + "s)</span>") : "<span style='color:#4ade80'>Touch Libero</span>";
+  html += "<div style='background:#0b2545;padding:10px;border-radius:8px;margin-bottom:10px;'>";
+  html += "<div style='display:flex;justify-content:space-between;align-items:center;'>";
+  html += "<b>4. Blocco Pulizia Schermo (Child Lock):</b> " + lockStatus;
+  html += "<a class='btn' style='padding:5px 10px;font-size:12px;background:#7c3aed;' href='/ctrl?clean_screen=1#adv-box'>&#129529; Blocca Touch per 30 Secondi</a>";
+  html += "</div>";
+  html += "<p style='font-size:12px;color:#8da9c4;margin:4px 0 0 0;'>Permette di passare un panno sullo schermo touch per pulirlo senza modificare accidentalmente setpoint o modalit&agrave;.</p>";
+  html += "</div>";
+
+  // 5. Sensore Finestra Esterno via MQTT & 6. Protezione Antigelo
+  html += "<form method='POST' action='/adv'>";
+  html += "<div style='background:#0b2545;padding:10px;border-radius:8px;margin-bottom:10px;'>";
+  String extWinStatus = ext_window_enabled ? (ext_window_open ? "<span style='color:#facc15'>APERTA (Pausa!)</span>" : "<span style='color:#4ade80'>Chiusa (OK)</span>") : "<span style='color:#94a3b8'>Disabilitato</span>";
+  html += "<div style='display:flex;justify-content:space-between;align-items:center;'>";
+  html += "<b>5. Sensore Finestra Esterno (MQTT):</b> " + extWinStatus;
+  html += "<a class='btn' style='padding:5px 10px;font-size:12px;background:" + String(ext_window_enabled ? "#dc2626" : "#16a34a") + ";' href='/ctrl?ext_win_en=" + String(ext_window_enabled ? 0 : 1) + "#adv-box'>" + (ext_window_enabled ? "Disabilita" : "Abilita") + "</a>";
+  html += "</div>";
+  html += "<label class='lbl' style='margin-top:6px;display:block;'>Topic MQTT Sensore Magnetico (Zigbee2MQTT / Shelly / HA)</label>";
+  html += "<input name='ext_win_top' value='" + String(ext_window_topic) + "' placeholder='es. zigbee2mqtt/Finestra_Sala/contact'>";
+  html += "</div>";
+
+  html += "<div style='background:#0b2545;padding:10px;border-radius:8px;margin-bottom:10px;'>";
+  String afStat = antifrost_enabled ? (antifrost_active ? "<span style='color:#f87171'>ALLARME ATTIVO!</span>" : "<span style='color:#4ade80'>Attivo (OK)</span>") : "<span style='color:#94a3b8'>Disabilitato</span>";
+  html += "<div style='display:flex;justify-content:space-between;align-items:center;'>";
+  html += "<b>6. Protezione Antigelo:</b> " + afStat;
+  html += "<a class='btn' style='padding:5px 10px;font-size:12px;background:" + String(antifrost_enabled ? "#dc2626" : "#16a34a") + ";' href='/ctrl?antifrost=" + String(antifrost_enabled ? 0 : 1) + "#adv-box'>" + (antifrost_enabled ? "Disabilita" : "Abilita") + "</a>";
+  html += "</div>";
+  html += "<div class='grid' style='margin-top:6px;'>";
+  html += "<div><label class='lbl'>Soglia Antigelo (&deg;C)</label><input type='number' step='0.5' min='3.0' max='10.0' name='antifrost_th' value='" + String(antifrost_temp_threshold, 1) + "'></div>";
+  html += "<div><label class='lbl'>Delta Isteresi (&deg;C)</label><input type='number' step='0.1' min='0.1' max='2.0' name='hyst_val' value='" + String(hysteresis_val, 1) + "'></div>";
+  html += "</div></div>";
+
+  html += "<button type='submit' style='background:#10b981;font-size:16px;font-weight:bold;'>Salva Impostazioni Avanzate</button>";
+  html += "</form></div>";
 
   // Card 1A: Meteo Barometrico & Comfort Ambientale (BME280)
   html += "<div class='card'><h3>Meteo Barometrico &amp; Comfort Ambientale</h3>";
@@ -1666,11 +1820,95 @@ void setup_web_server() {
       publish_ha_state();
       play_beep(2600, 25);
     }
+    if (webServer.hasArg("hyst_en")) {
+      hysteresis_enabled = (webServer.arg("hyst_en").toInt() != 0);
+      save_json_config();
+      publish_ha_state();
+      play_beep(2600, 25);
+    }
+    if (webServer.hasArg("hyst_val")) {
+      float hv = webServer.arg("hyst_val").toFloat();
+      if (!isnan(hv) && hv >= 0.1f && hv <= 2.0f) {
+        hysteresis_val = round(hv * 10.0f) / 10.0f;
+        save_json_config();
+        publish_ha_state();
+        play_beep(2600, 25);
+      }
+    }
+    if (webServer.hasArg("pump_prot")) {
+      pump_protection_enabled = (webServer.arg("pump_prot").toInt() != 0);
+      save_json_config();
+      publish_ha_state();
+      play_beep(2600, 25);
+    }
+    if (webServer.hasArg("pump_test")) {
+      trigger_pump_test(60);
+    }
+    if (webServer.hasArg("night_en")) {
+      night_mode_enabled = (webServer.arg("night_en").toInt() != 0);
+      save_json_config();
+      publish_ha_state();
+      play_beep(2600, 25);
+    }
+    if (webServer.hasArg("clean_screen")) {
+      trigger_child_lock(30);
+    }
+    if (webServer.hasArg("ext_win_en")) {
+      ext_window_enabled = (webServer.arg("ext_win_en").toInt() != 0);
+      if (!ext_window_enabled) ext_window_open = false;
+      if (client.connected() && ext_window_enabled && ext_window_topic[0] != '\0') {
+        client.subscribe(ext_window_topic);
+      }
+      save_json_config();
+      publish_ha_state();
+      play_beep(2600, 25);
+    }
+    if (webServer.hasArg("antifrost_th")) {
+      float ath = webServer.arg("antifrost_th").toFloat();
+      if (!isnan(ath) && ath >= 3.0f && ath <= 10.0f) {
+        antifrost_temp_threshold = round(ath * 10.0f) / 10.0f;
+        save_json_config();
+        publish_ha_state();
+        play_beep(2600, 25);
+      }
+    }
     previousMillis_lcd = millis();
     lcd_set_bright();
     gslc_ElemSetVisible(&m_gui, m_pElemBtn_wake_up, false);
     gslc_ElemSetVisible(&m_gui, m_pElemBtn_wake_up2, false);
     webServer.sendHeader("Location", "/");
+    webServer.send(303);
+  });
+
+  webServer.on("/adv", HTTP_POST, []() {
+    if (webServer.hasArg("hyst_en")) hysteresis_enabled = (webServer.arg("hyst_en").toInt() != 0);
+    if (webServer.hasArg("hyst_val")) {
+      float hv = webServer.arg("hyst_val").toFloat();
+      if (!isnan(hv) && hv >= 0.1f && hv <= 2.0f) hysteresis_val = round(hv * 10.0f) / 10.0f;
+    }
+    if (webServer.hasArg("pump_prot")) pump_protection_enabled = (webServer.arg("pump_prot").toInt() != 0);
+    if (webServer.hasArg("night_en")) night_mode_enabled = (webServer.arg("night_en").toInt() != 0);
+    if (webServer.hasArg("night_start")) night_start_hour = constrain(webServer.arg("night_start").toInt(), 0, 23);
+    if (webServer.hasArg("night_end")) night_end_hour = constrain(webServer.arg("night_end").toInt(), 0, 23);
+    if (webServer.hasArg("ext_win_en")) {
+      ext_window_enabled = (webServer.arg("ext_win_en").toInt() != 0);
+      if (!ext_window_enabled) ext_window_open = false;
+    }
+    if (webServer.hasArg("ext_win_top")) {
+      strncpy(ext_window_topic, webServer.arg("ext_win_top").c_str(), sizeof(ext_window_topic) - 1);
+      ext_window_topic[sizeof(ext_window_topic) - 1] = '\0';
+      if (client.connected() && ext_window_enabled && ext_window_topic[0] != '\0') {
+        client.subscribe(ext_window_topic);
+      }
+    }
+    if (webServer.hasArg("antifrost_th")) {
+      float ath = webServer.arg("antifrost_th").toFloat();
+      if (!isnan(ath) && ath >= 3.0f && ath <= 10.0f) antifrost_temp_threshold = round(ath * 10.0f) / 10.0f;
+    }
+    save_json_config();
+    publish_ha_state();
+    play_beep(2700, 30);
+    webServer.sendHeader("Location", "/#adv-box");
     webServer.send(303);
   });
 
@@ -1928,6 +2166,33 @@ void setup()
           if (json["openwin"].is<int>()) {
             open_window_enabled = (json["openwin"].as<int>() != 0);
           }
+          if (json["antifrost_sp"].is<float>()) {
+            antifrost_temp_threshold = constrain(json["antifrost_sp"].as<float>(), 3.0f, 10.0f);
+          }
+          if (json["hyst_en"].is<int>()) {
+            hysteresis_enabled = (json["hyst_en"].as<int>() != 0);
+          }
+          if (json["hyst_val"].is<float>()) {
+            hysteresis_val = constrain(json["hyst_val"].as<float>(), 0.1f, 2.0f);
+          }
+          if (json["pump_prot"].is<int>()) {
+            pump_protection_enabled = (json["pump_prot"].as<int>() != 0);
+          }
+          if (json["night_en"].is<int>()) {
+            night_mode_enabled = (json["night_en"].as<int>() != 0);
+          }
+          if (json["night_start"].is<int>()) {
+            night_start_hour = constrain(json["night_start"].as<int>(), 0, 23);
+          }
+          if (json["night_end"].is<int>()) {
+            night_end_hour = constrain(json["night_end"].as<int>(), 0, 23);
+          }
+          if (json["ext_win_en"].is<int>()) {
+            ext_window_enabled = (json["ext_win_en"].as<int>() != 0);
+          }
+          if (json["ext_win_top"].is<const char*>()) {
+            strncpy(ext_window_topic, json["ext_win_top"].as<const char*>(), sizeof(ext_window_topic) - 1);
+          }
           if (json["sched"].is<JsonArray>()) {
             JsonArray sched = json["sched"].as<JsonArray>();
             if (sched.size() >= 16) {
@@ -2106,11 +2371,76 @@ void loop()
     }
   }
 
-  if (currentMillis - previousMillis_lcd >= interval_lcd) {
+  // Gestione Blocco Pulizia / Child Lock
+  if (child_lock_active) {
+    if (millis() < child_lock_until_ms) {
+      int rem = (int)((child_lock_until_ms - millis() + 999) / 1000);
+      static int last_lock_sec = -1;
+      if (rem != last_lock_sec) {
+        last_lock_sec = rem;
+        char lockBuf[8];
+        snprintf(lockBuf, sizeof(lockBuf), "LCK%2d", rem);
+        gslc_ElemSetTxtStr(&m_gui, m_pElemOutTxt_stat, lockBuf);
+      }
+    } else {
+      child_lock_active = false;
+      publish_ha_state();
+      play_beep(2600, 35);
+      gslc_ElemSetTxtStr(&m_gui, m_pElemOutTxt_stat, (digitalRead(rele_pin) == HIGH) ? "ON " : "OFF");
+    }
+  }
+
+  // Gestione Test Pompa Antiblocco
+  if (pump_test_active) {
+    if (millis() >= pump_test_end_ms) {
+      pump_test_active = false;
+      digitalWrite(rele_pin, LOW);
+      publish_ha_state();
+      play_beep(2200, 40);
+      Serial.println("Protezione antiblocco: test pompa completato.");
+      gslc_ElemSetTxtStr(&m_gui, m_pElemOutTxt_stat, "OFF");
+    }
+  }
+
+  // Controllo automatico settimanale antiblocco pompa (ogni mercoledi ore 12:00)
+  if (pump_protection_enabled && !pump_test_active && WiFi.status() == WL_CONNECTED) {
+    struct tm timeinfo;
+    if (getLocalTime(&timeinfo, 20)) {
+      if (timeinfo.tm_wday == 3 && timeinfo.tm_hour == 12 && timeinfo.tm_min == 0) {
+        if (timeinfo.tm_yday != last_pump_test_yday) {
+          last_pump_test_yday = timeinfo.tm_yday;
+          trigger_pump_test(60);
+        }
+      }
+    }
+  }
+
+  // Gestione Modalità Notte & Auto-Dimming Programmato
+  if (night_mode_enabled && WiFi.status() == WL_CONNECTED) {
+    struct tm timeinfo;
+    if (getLocalTime(&timeinfo, 20)) {
+      int h = timeinfo.tm_hour;
+      bool in_night = false;
+      if (night_start_hour > night_end_hour) {
+        in_night = (h >= night_start_hour || h < night_end_hour);
+      } else if (night_start_hour < night_end_hour) {
+        in_night = (h >= night_start_hour && h < night_end_hour);
+      }
+      night_active = in_night;
+    }
+  } else {
+    night_active = false;
+  }
+
+  if (night_active && millis() >= night_wake_until_ms) {
+    lcd_set_off();
+    gslc_ElemSetVisible(&m_gui, m_pElemBtn_wake_up, true);
+    gslc_ElemSetVisible(&m_gui, m_pElemBtn_wake_up2, true);
+  } else if (currentMillis - previousMillis_lcd >= interval_lcd) {
     previousMillis_lcd = currentMillis;
     lcd_set_dim();
-    gslc_ElemSetVisible(&m_gui,m_pElemBtn_wake_up,true);
-    gslc_ElemSetVisible(&m_gui,m_pElemBtn_wake_up2,true);    
+    gslc_ElemSetVisible(&m_gui, m_pElemBtn_wake_up, true);
+    gslc_ElemSetVisible(&m_gui, m_pElemBtn_wake_up2, true);    
   }
 
   if (currentMillis - previousMillis_graph >= interval_graph) {
@@ -2128,7 +2458,15 @@ void loop()
   if (currentMillis - previousMillis_rele >= interval_rele) {
     previousMillis_rele = currentMillis;       
 
-    // 1. Controllo Prioritario Protezione Antigelo: se T < 5.0 °C (con isteresi a 6.0 °C)
+    // Se il test pompa è attivo, salta il normale controllo del termostato
+    if (pump_test_active) {
+      gslc_ElemSetTxtStr(&m_gui, m_pElemOutTxt_stat, "PUMP");
+      digitalWrite(rele_pin, HIGH);
+      publish_ha_state();
+      return;
+    }
+
+    // 1. Controllo Prioritario Protezione Antigelo: se T < soglia (con isteresi a +1.0 °C)
     if (bme_ok && antifrost_enabled) {
       if (averageValueT.average() <= antifrost_temp_threshold) {
         antifrost_active = true;
@@ -2144,15 +2482,19 @@ void loop()
       if (rele_id[0] != 0 && client.connected()) client.publish(rele_id, "ON");
       gslc_ElemSetTxtStr(&m_gui, m_pElemOutTxt_stat, "GELO");
       digitalWrite(rele_pin, HIGH);
+      last_relay_active_time = currentMillis;
       if (m_pElemOutTxt_SetpointLbl != NULL) {
-        gslc_ElemSetTxtStr(&m_gui, m_pElemOutTxt_SetpointLbl, "ANTIGELO 5C");
+        char geloBuf[16];
+        snprintf(geloBuf, sizeof(geloBuf), "ANTIGELO %.0fC", antifrost_temp_threshold);
+        gslc_ElemSetTxtStr(&m_gui, m_pElemOutTxt_SetpointLbl, geloBuf);
       }
       publish_ha_state();
       return;
     }
 
-    // 2. Controllo Finestra Aperta: spegne temporaneamente il riscaldamento per evitare sprechi
-    if (open_window_active) {
+    // 2. Controllo Finestra Aperta (sensore locale o esterno via MQTT): sospende riscaldamento/raffrescamento
+    bool any_window_open = (open_window_enabled && open_window_active) || (ext_window_enabled && ext_window_open);
+    if (any_window_open) {
       Serial.println("Finestra aperta: riscaldamento temporaneamente sospeso.");
       if (rele_id[0] != 0 && client.connected()) client.publish(rele_id, "OFF");
       gslc_ElemSetTxtStr(&m_gui, m_pElemOutTxt_stat, "WNDW");
@@ -2160,21 +2502,25 @@ void loop()
       publish_ha_state();
       return;
     }
+
+    // Calcolo isteresi dinamica
+    float eff_hyst = hysteresis_enabled ? hysteresis_val : 0.05f;
       
     if (stato == 1 && bme_ok){
       if (averageValueT.average() >= temp_setpoint){
         //stacca rele
         Serial.println("stacco rele");
         if (rele_id[0]!=0 && client.connected()) client.publish(rele_id, "OFF");
-        gslc_ElemSetTxtStr(&m_gui,m_pElemOutTxt_stat,"OFF");
+        if (!child_lock_active) gslc_ElemSetTxtStr(&m_gui,m_pElemOutTxt_stat,"OFF");
         digitalWrite(rele_pin, LOW);
       }
-      else if(averageValueT.average() <= temp_setpoint-threshold_offset){   
+      else if(averageValueT.average() <= (temp_setpoint - eff_hyst)){   
         //attacca rele  
         Serial.println("attacco rele");
         if (rele_id[0]!=0 && client.connected()) client.publish(rele_id, "ON");
-        gslc_ElemSetTxtStr(&m_gui,m_pElemOutTxt_stat,"ON ");
+        if (!child_lock_active) gslc_ElemSetTxtStr(&m_gui,m_pElemOutTxt_stat,"ON ");
         digitalWrite(rele_pin, HIGH);
+        last_relay_active_time = currentMillis;
       }
     }
         
@@ -2183,22 +2529,23 @@ void loop()
         //stacca rele
         Serial.println("stacco rele");
         if (rele_id[0]!=0 && client.connected()) client.publish(rele_id, "OFF");
-        gslc_ElemSetTxtStr(&m_gui,m_pElemOutTxt_stat,"OFF");
+        if (!child_lock_active) gslc_ElemSetTxtStr(&m_gui,m_pElemOutTxt_stat,"OFF");
         digitalWrite(rele_pin, LOW);
       }
-      else if(averageValueT.average() >= temp_setpoint+threshold_offset){
+      else if(averageValueT.average() >= (temp_setpoint + eff_hyst)){
         //attacca rele  
         Serial.println("attacco rele");
         if (rele_id[0]!=0 && client.connected()) client.publish(rele_id, "ON");
-        gslc_ElemSetTxtStr(&m_gui,m_pElemOutTxt_stat,"ON ");
+        if (!child_lock_active) gslc_ElemSetTxtStr(&m_gui,m_pElemOutTxt_stat,"ON ");
         digitalWrite(rele_pin, HIGH);
+        last_relay_active_time = currentMillis;
       }
     }
     if (stato == 0){
       //stacca rele
       Serial.println("stacco rele");
       if (rele_id[0]!=0 && client.connected()) client.publish(rele_id, "OFF");
-      gslc_ElemSetTxtStr(&m_gui,m_pElemOutTxt_stat,"---");
+      if (!child_lock_active) gslc_ElemSetTxtStr(&m_gui,m_pElemOutTxt_stat,"---");
       digitalWrite(rele_pin, LOW);
     }
     publish_ha_state();

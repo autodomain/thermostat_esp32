@@ -48,8 +48,34 @@ void publish_ha_state() {
   snprintf(topic, sizeof(topic), "%santifrost/get", thermostat_id);
   client.publish(topic, antifrost_enabled ? "ON" : "OFF", true, 0);
 
+  dtostrf(antifrost_temp_threshold, 0, 1, buf);
+  snprintf(topic, sizeof(topic), "%santifrost_th/get", thermostat_id);
+  client.publish(topic, buf, true, 0);
+
   snprintf(topic, sizeof(topic), "%sopenwin/get", thermostat_id);
   client.publish(topic, open_window_enabled ? "ON" : "OFF", true, 0);
+
+  snprintf(topic, sizeof(topic), "%shysteresis/get", thermostat_id);
+  client.publish(topic, hysteresis_enabled ? "ON" : "OFF", true, 0);
+
+  dtostrf(hysteresis_val, 0, 1, buf);
+  snprintf(topic, sizeof(topic), "%shysteresis_val/get", thermostat_id);
+  client.publish(topic, buf, true, 0);
+
+  snprintf(topic, sizeof(topic), "%spump_prot/get", thermostat_id);
+  client.publish(topic, pump_protection_enabled ? "ON" : "OFF", true, 0);
+
+  snprintf(topic, sizeof(topic), "%snight_mode/get", thermostat_id);
+  client.publish(topic, night_mode_enabled ? "ON" : "OFF", true, 0);
+
+  snprintf(topic, sizeof(topic), "%sclean_screen/state", thermostat_id);
+  client.publish(topic, child_lock_active ? "ON" : "OFF", true, 0);
+
+  snprintf(topic, sizeof(topic), "%sext_win_en/get", thermostat_id);
+  client.publish(topic, ext_window_enabled ? "ON" : "OFF", true, 0);
+
+  snprintf(topic, sizeof(topic), "%sext_win/state", thermostat_id);
+  client.publish(topic, ext_window_open ? "ON" : "OFF", true, 0);
 
   // Ore accensione oggi (in ore decimali con 2 cifre, es. 3.25 h)
   float h_today = runtime_today_sec / 3600.0f;
@@ -732,6 +758,203 @@ void publish_ha_discovery() {
     client.publish(discTopic.c_str(), payload.c_str(), true, 0);
   }
 
+  // 24. Switch Isteresi
+  {
+    DynamicJsonDocument doc(512);
+    doc["~"]        = baseTopic;
+    doc["name"]     = "Isteresi " + zoneName;
+    doc["obj_id"]   = "termostato_" + zoneSlug + "_hysteresis";
+    doc["uniq_id"]  = devId + "_hysteresis";
+    doc["stat_t"]   = "~hysteresis/get";
+    doc["cmd_t"]    = "~hysteresis/set";
+    doc["avty_t"]   = "~status";
+    doc["icon"]     = "mdi:valve";
+    JsonObject dev  = doc.createNestedObject("dev");
+    JsonArray ids   = dev.createNestedArray("ids");
+    ids.add(devId);
+
+    String payload;
+    serializeJson(doc, payload);
+    String discTopic = "homeassistant/switch/" + devId + "_hysteresis/config";
+    client.publish(discTopic.c_str(), payload.c_str(), true, 0);
+  }
+
+  // 25. Number Valore Isteresi (°C)
+  {
+    DynamicJsonDocument doc(512);
+    doc["~"]            = baseTopic;
+    doc["name"]         = "Valore Isteresi " + zoneName;
+    doc["obj_id"]       = "termostato_" + zoneSlug + "_hysteresis_val";
+    doc["uniq_id"]      = devId + "_hysteresis_val";
+    doc["stat_t"]       = "~hysteresis_val/get";
+    doc["cmd_t"]        = "~hysteresis_val/set";
+    doc["avty_t"]       = "~status";
+    doc["min"]          = 0.1;
+    doc["max"]          = 2.0;
+    doc["step"]         = 0.1;
+    doc["unit_of_meas"] = "°C";
+    doc["mode"]         = "box";
+    doc["icon"]         = "mdi:delta";
+    JsonObject dev      = doc.createNestedObject("dev");
+    JsonArray ids       = dev.createNestedArray("ids");
+    ids.add(devId);
+
+    String payload;
+    serializeJson(doc, payload);
+    String discTopic = "homeassistant/number/" + devId + "_hysteresis_val/config";
+    client.publish(discTopic.c_str(), payload.c_str(), true, 0);
+  }
+
+  // 26. Switch Protezione Antiblocco Pompa
+  {
+    DynamicJsonDocument doc(512);
+    doc["~"]        = baseTopic;
+    doc["name"]     = "Protezione Pompa " + zoneName;
+    doc["obj_id"]   = "termostato_" + zoneSlug + "_pump_prot";
+    doc["uniq_id"]  = devId + "_pump_prot";
+    doc["stat_t"]   = "~pump_prot/get";
+    doc["cmd_t"]    = "~pump_prot/set";
+    doc["avty_t"]   = "~status";
+    doc["icon"]     = "mdi:pump";
+    JsonObject dev  = doc.createNestedObject("dev");
+    JsonArray ids   = dev.createNestedArray("ids");
+    ids.add(devId);
+
+    String payload;
+    serializeJson(doc, payload);
+    String discTopic = "homeassistant/switch/" + devId + "_pump_prot/config";
+    client.publish(discTopic.c_str(), payload.c_str(), true, 0);
+  }
+
+  // 27. Button Test Pompa 60s
+  {
+    DynamicJsonDocument doc(512);
+    doc["~"]        = baseTopic;
+    doc["name"]     = "Test Pompa 60s " + zoneName;
+    doc["obj_id"]   = "termostato_" + zoneSlug + "_pump_test";
+    doc["uniq_id"]  = devId + "_pump_test";
+    doc["cmd_t"]    = "~pump_test/set";
+    doc["avty_t"]   = "~status";
+    doc["icon"]     = "mdi:pump";
+    JsonObject dev  = doc.createNestedObject("dev");
+    JsonArray ids   = dev.createNestedArray("ids");
+    ids.add(devId);
+
+    String payload;
+    serializeJson(doc, payload);
+    String discTopic = "homeassistant/button/" + devId + "_pump_test/config";
+    client.publish(discTopic.c_str(), payload.c_str(), true, 0);
+  }
+
+  // 28. Switch Modalità Notte (Auto-Dimming)
+  {
+    DynamicJsonDocument doc(512);
+    doc["~"]        = baseTopic;
+    doc["name"]     = "Modalita Notte " + zoneName;
+    doc["obj_id"]   = "termostato_" + zoneSlug + "_night_mode";
+    doc["uniq_id"]  = devId + "_night_mode";
+    doc["stat_t"]   = "~night_mode/get";
+    doc["cmd_t"]    = "~night_mode/set";
+    doc["avty_t"]   = "~status";
+    doc["icon"]     = "mdi:weather-night";
+    JsonObject dev  = doc.createNestedObject("dev");
+    JsonArray ids   = dev.createNestedArray("ids");
+    ids.add(devId);
+
+    String payload;
+    serializeJson(doc, payload);
+    String discTopic = "homeassistant/switch/" + devId + "_night_mode/config";
+    client.publish(discTopic.c_str(), payload.c_str(), true, 0);
+  }
+
+  // 29. Button Blocco Pulizia Schermo 30s
+  {
+    DynamicJsonDocument doc(512);
+    doc["~"]        = baseTopic;
+    doc["name"]     = "Pulizia Schermo " + zoneName;
+    doc["obj_id"]   = "termostato_" + zoneSlug + "_clean_screen";
+    doc["uniq_id"]  = devId + "_clean_screen";
+    doc["cmd_t"]    = "~clean_screen/set";
+    doc["avty_t"]   = "~status";
+    doc["icon"]     = "mdi:spray-bottle";
+    JsonObject dev  = doc.createNestedObject("dev");
+    JsonArray ids   = dev.createNestedArray("ids");
+    ids.add(devId);
+
+    String payload;
+    serializeJson(doc, payload);
+    String discTopic = "homeassistant/button/" + devId + "_clean_screen/config";
+    client.publish(discTopic.c_str(), payload.c_str(), true, 0);
+  }
+
+  // 30. Switch Sensore Finestra Esterno via MQTT
+  {
+    DynamicJsonDocument doc(512);
+    doc["~"]        = baseTopic;
+    doc["name"]     = "Finestra Esterna MQTT " + zoneName;
+    doc["obj_id"]   = "termostato_" + zoneSlug + "_ext_win_en";
+    doc["uniq_id"]  = devId + "_ext_win_en";
+    doc["stat_t"]   = "~ext_win_en/get";
+    doc["cmd_t"]    = "~ext_win_en/set";
+    doc["avty_t"]   = "~status";
+    doc["icon"]     = "mdi:window-open";
+    JsonObject dev  = doc.createNestedObject("dev");
+    JsonArray ids   = dev.createNestedArray("ids");
+    ids.add(devId);
+
+    String payload;
+    serializeJson(doc, payload);
+    String discTopic = "homeassistant/switch/" + devId + "_ext_win_en/config";
+    client.publish(discTopic.c_str(), payload.c_str(), true, 0);
+  }
+
+  // 31. Binary Sensor Stato Finestra Esterna
+  {
+    DynamicJsonDocument doc(512);
+    doc["~"]        = baseTopic;
+    doc["name"]     = "Stato Finestra Esterna " + zoneName;
+    doc["obj_id"]   = "termostato_" + zoneSlug + "_ext_win_state";
+    doc["uniq_id"]  = devId + "_ext_win_state";
+    doc["stat_t"]   = "~ext_win/state";
+    doc["avty_t"]   = "~status";
+    doc["dev_cla"]  = "window";
+    doc["icon"]     = "mdi:window-open-variant";
+    JsonObject dev  = doc.createNestedObject("dev");
+    JsonArray ids   = dev.createNestedArray("ids");
+    ids.add(devId);
+
+    String payload;
+    serializeJson(doc, payload);
+    String discTopic = "homeassistant/binary_sensor/" + devId + "_ext_win_state/config";
+    client.publish(discTopic.c_str(), payload.c_str(), true, 0);
+  }
+
+  // 32. Number Soglia Antigelo (°C)
+  {
+    DynamicJsonDocument doc(512);
+    doc["~"]            = baseTopic;
+    doc["name"]         = "Soglia Antigelo " + zoneName;
+    doc["obj_id"]       = "termostato_" + zoneSlug + "_antifrost_th";
+    doc["uniq_id"]      = devId + "_antifrost_th";
+    doc["stat_t"]       = "~antifrost_th/get";
+    doc["cmd_t"]        = "~antifrost_th/set";
+    doc["avty_t"]       = "~status";
+    doc["min"]          = 3.0;
+    doc["max"]          = 10.0;
+    doc["step"]         = 0.5;
+    doc["unit_of_meas"] = "°C";
+    doc["mode"]         = "box";
+    doc["icon"]         = "mdi:snowflake-thermometer";
+    JsonObject dev      = doc.createNestedObject("dev");
+    JsonArray ids       = dev.createNestedArray("ids");
+    ids.add(devId);
+
+    String payload;
+    serializeJson(doc, payload);
+    String discTopic = "homeassistant/number/" + devId + "_antifrost_th/config";
+    client.publish(discTopic.c_str(), payload.c_str(), true, 0);
+  }
+
   publish_ha_state();
 }
 
@@ -773,6 +996,17 @@ void connect() {
     client.subscribe(thermostat_id + String("antifrost/set"));
     client.subscribe(thermostat_id + String("openwin/set"));
     client.subscribe(thermostat_id + String("reboot/set"));
+    client.subscribe(thermostat_id + String("hysteresis/set"));
+    client.subscribe(thermostat_id + String("hysteresis_val/set"));
+    client.subscribe(thermostat_id + String("pump_prot/set"));
+    client.subscribe(thermostat_id + String("pump_test/set"));
+    client.subscribe(thermostat_id + String("night_mode/set"));
+    client.subscribe(thermostat_id + String("clean_screen/set"));
+    client.subscribe(thermostat_id + String("ext_win_en/set"));
+    client.subscribe(thermostat_id + String("antifrost_th/set"));
+    if (ext_window_enabled && ext_window_topic[0] != '\0') {
+      client.subscribe(ext_window_topic);
+    }
     Serial.println("Subscribed to " + String(thermostat_id) + "set");
 
     publish_ha_discovery();
@@ -877,6 +1111,80 @@ void messageReceived(String &topic, String &payload) {
     save_json_config();
     publish_ha_state();
     play_beep(2600, 25);
+  }
+  // Gestione Sensore Finestra Esterno via MQTT
+  if (ext_window_enabled && ext_window_topic[0] != '\0' && topic.equals(ext_window_topic)) {
+    String pl = payload;
+    pl.toLowerCase();
+    if (pl == "on" || pl == "true" || pl == "open" || pl == "1" || pl.indexOf("\"contact\":false") >= 0) {
+      ext_window_open = true;
+      Serial.println("Sensore Finestra Esterno: APERTA");
+    } else {
+      ext_window_open = false;
+      Serial.println("Sensore Finestra Esterno: CHIUSA");
+    }
+    publish_ha_state();
+    return;
+  }
+  snprintf(myConcatenation, sizeof(myConcatenation), "%shysteresis/set", thermostat_id);
+  if (topic.equals(myConcatenation)) {
+    hysteresis_enabled = (payload == "ON" || payload == "1" || payload == "true");
+    save_json_config();
+    publish_ha_state();
+    play_beep(2600, 25);
+  }
+  snprintf(myConcatenation, sizeof(myConcatenation), "%shysteresis_val/set", thermostat_id);
+  if (topic.equals(myConcatenation)) {
+    float hv = payload.toFloat();
+    if (!isnan(hv) && hv >= 0.1f && hv <= 2.0f) {
+      hysteresis_val = round(hv * 10.0f) / 10.0f;
+      save_json_config();
+      publish_ha_state();
+      play_beep(2600, 25);
+    }
+  }
+  snprintf(myConcatenation, sizeof(myConcatenation), "%spump_prot/set", thermostat_id);
+  if (topic.equals(myConcatenation)) {
+    pump_protection_enabled = (payload == "ON" || payload == "1" || payload == "true");
+    save_json_config();
+    publish_ha_state();
+    play_beep(2600, 25);
+  }
+  snprintf(myConcatenation, sizeof(myConcatenation), "%spump_test/set", thermostat_id);
+  if (topic.equals(myConcatenation)) {
+    trigger_pump_test(60);
+  }
+  snprintf(myConcatenation, sizeof(myConcatenation), "%snight_mode/set", thermostat_id);
+  if (topic.equals(myConcatenation)) {
+    night_mode_enabled = (payload == "ON" || payload == "1" || payload == "true");
+    save_json_config();
+    publish_ha_state();
+    play_beep(2600, 25);
+  }
+  snprintf(myConcatenation, sizeof(myConcatenation), "%sclean_screen/set", thermostat_id);
+  if (topic.equals(myConcatenation)) {
+    trigger_child_lock(30);
+  }
+  snprintf(myConcatenation, sizeof(myConcatenation), "%sext_win_en/set", thermostat_id);
+  if (topic.equals(myConcatenation)) {
+    ext_window_enabled = (payload == "ON" || payload == "1" || payload == "true");
+    if (!ext_window_enabled) ext_window_open = false;
+    if (client.connected() && ext_window_enabled && ext_window_topic[0] != '\0') {
+      client.subscribe(ext_window_topic);
+    }
+    save_json_config();
+    publish_ha_state();
+    play_beep(2600, 25);
+  }
+  snprintf(myConcatenation, sizeof(myConcatenation), "%santifrost_th/set", thermostat_id);
+  if (topic.equals(myConcatenation)) {
+    float ath = payload.toFloat();
+    if (!isnan(ath) && ath >= 3.0f && ath <= 10.0f) {
+      antifrost_temp_threshold = round(ath * 10.0f) / 10.0f;
+      save_json_config();
+      publish_ha_state();
+      play_beep(2600, 25);
+    }
   }
   snprintf(myConcatenation, sizeof(myConcatenation), "%sreboot/set", thermostat_id);
   if (topic.equals(myConcatenation)) {
