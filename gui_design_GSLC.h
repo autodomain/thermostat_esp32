@@ -60,7 +60,8 @@ enum {E_DRAW_LINE1,E_ELEM_BOX4,E_ELEM_BOX5,E_ELEM_BOX6,E_ELEM_BOX8
       ,E_ELEM_TEXT48,E_ELEM_TEXT5,E_ELEM_TEXT50,E_ELEM_TEXT6
       ,E_ELEM_TEXT_STAT,E_ELEM_TEXT_TEMP_OFFSET
       ,E_ELEM_TEXT_TEMP_OUTSIDE,E_ELEM_TEXT_TEMP_SETPOINT
-      ,E_ELEM_TEXT_status,E_ELEM_TEXT_WEATHER};
+      ,E_ELEM_TEXT_status,E_ELEM_TEXT_WEATHER
+      ,E_ELEM_BOX_STATUS_BAR,E_ELEM_BOX_WIFI_BARS};
 // Must use separate enum for fonts with MAX_FONT at end to use gslc_FontSet.
 enum {E_BUILTIN10X16,E_BUILTIN5X8,E_FREESANS12,E_FREESANS18
       ,E_FREESANS24,E_FREESANS9,MAX_FONT};
@@ -76,7 +77,7 @@ enum {E_BUILTIN10X16,E_BUILTIN5X8,E_FREESANS12,E_FREESANS18
 //<ElementDefines !Start!>
 #define MAX_PAGE                2
 
-#define MAX_ELEM_PG_MAIN 34 // # Elems total on page
+#define MAX_ELEM_PG_MAIN 36 // # Elems total on page
 #define MAX_ELEM_PG_MAIN_RAM MAX_ELEM_PG_MAIN // # Elems in RAM
 
 #define MAX_ELEM_PG2 10 // # Elems total on page
@@ -143,6 +144,8 @@ extern gslc_tsElemRef* m_pElemRB_sample2_4;
 extern gslc_tsElemRef* m_pElemSlider_temp_offset;
 extern gslc_tsElemRef* m_pElemOutTxt_Weather;
 extern gslc_tsElemRef* m_pElemOutTxt_SetpointLbl;
+extern gslc_tsElemRef* m_pElemBox_StatusBar;
+extern gslc_tsElemRef* m_pElemBox_WifiBars;
 //<Extern_References !End!>
 
 // Define debug message function
@@ -154,6 +157,8 @@ static int16_t DebugOut(char ch);
 bool CbBtnCommon(void* pvGui,void *pvElemRef,gslc_teTouch eTouch,int16_t nX,int16_t nY);
 bool CbCheckbox(void* pvGui, void* pvElemRef, int16_t nSelId, bool bState);
 bool CbDrawScanner(void* pvGui,void* pvElemRef,gslc_teRedrawType eRedraw);
+bool CbDrawStatusBar(void* pvGui,void* pvElemRef,gslc_teRedrawType eRedraw);
+bool CbDrawWifiBars(void* pvGui,void* pvElemRef,gslc_teRedrawType eRedraw);
 bool CbKeypad(void* pvGui, void *pvElemRef, int16_t nState, void* pvData);
 bool CbListbox(void* pvGui, void* pvElemRef, int16_t nSelId);
 bool CbSlidePos(void* pvGui,void* pvElemRef,int16_t nPos);
@@ -285,21 +290,21 @@ void InitGUIslice_gen()
   gslc_ElemSetCol(&m_gui,pElemRef,((gslc_tsColor){0,95,218}),((gslc_tsColor){0,75,153}),((gslc_tsColor){0,75,153}));
   
   // Create E_ELEM_TEXT18 text label
-  pElemRef = gslc_ElemCreateTxt(&m_gui,E_ELEM_TEXT18,E_PG_MAIN,(gslc_tsRect){132,10,10,15},
+  pElemRef = gslc_ElemCreateTxt(&m_gui,E_ELEM_TEXT18,E_PG_MAIN,(gslc_tsRect){132,9,10,15},
     (char*)"T",0,E_FREESANS9);
   gslc_ElemSetCol(&m_gui,pElemRef,GSLC_COL_GRAY,((gslc_tsColor){0,65,128}),GSLC_COL_BLACK);
   gslc_ElemSetTxtCol(&m_gui,pElemRef,((gslc_tsColor){0,136,255}));
   
   // Create E_ELEM_TEXT_TEMP_OUTSIDE runtime modifiable text
   static char m_sDisplayText19[8] = "--.-";
-  pElemRef = gslc_ElemCreateTxt(&m_gui,E_ELEM_TEXT_TEMP_OUTSIDE,E_PG_MAIN,(gslc_tsRect){146,10,40,15},
+  pElemRef = gslc_ElemCreateTxt(&m_gui,E_ELEM_TEXT_TEMP_OUTSIDE,E_PG_MAIN,(gslc_tsRect){146,9,40,15},
     (char*)m_sDisplayText19,8,E_FREESANS9);
   gslc_ElemSetCol(&m_gui,pElemRef,GSLC_COL_GRAY,((gslc_tsColor){0,65,128}),GSLC_COL_BLACK);
   gslc_ElemSetTxtCol(&m_gui,pElemRef,((gslc_tsColor){135,211,255}));
   m_pElemOutTxt_Temp_Outside = pElemRef;
   
   // Create E_ELEM_TEXT23 text label
-  pElemRef = gslc_ElemCreateTxt(&m_gui,E_ELEM_TEXT23,E_PG_MAIN,(gslc_tsRect){190,10,12,15},
+  pElemRef = gslc_ElemCreateTxt(&m_gui,E_ELEM_TEXT23,E_PG_MAIN,(gslc_tsRect){190,9,12,15},
     (char*)"C",0,E_FREESANS9);
   gslc_ElemSetTxtCol(&m_gui,pElemRef,((gslc_tsColor){0,136,255}));
   gslc_ElemSetCol(&m_gui,pElemRef,GSLC_COL_GRAY,((gslc_tsColor){0,65,128}),GSLC_COL_BLACK);
@@ -307,13 +312,13 @@ void InitGUIslice_gen()
   
   // Create radio button E_ELEM_RADIO2
   pElemRef = gslc_ElemXCheckboxCreate(&m_gui,E_ELEM_RADIO2,E_PG_MAIN,&m_asXRadio2,
-    (gslc_tsRect){185,8,6,6},true,GSLCX_CHECKBOX_STYLE_ROUND,GSLC_COL_GREEN,false);
+    (gslc_tsRect){185,7,6,6},true,GSLCX_CHECKBOX_STYLE_ROUND,GSLC_COL_GREEN,false);
   gslc_ElemSetCol(&m_gui,pElemRef,((gslc_tsColor){0,136,255}),((gslc_tsColor){0,65,128}),((gslc_tsColor){0,75,153}));
   m_pElemRB_sample2 = pElemRef;
   
   // Create E_ELEM_TEXT30 runtime modifiable text
   static char m_sDisplayText30[20] = "";
-  pElemRef = gslc_ElemCreateTxt(&m_gui,E_ELEM_TEXT30,E_PG_MAIN,(gslc_tsRect){9,10,120,15},
+  pElemRef = gslc_ElemCreateTxt(&m_gui,E_ELEM_TEXT30,E_PG_MAIN,(gslc_tsRect){9,9,120,15},
     (char*)m_sDisplayText30,20,E_FREESANS9);
   gslc_ElemSetTxtCol(&m_gui,pElemRef,((gslc_tsColor){0,136,255}));
   gslc_ElemSetCol(&m_gui,pElemRef,GSLC_COL_GRAY,((gslc_tsColor){0,65,128}),GSLC_COL_BLACK);
@@ -385,7 +390,7 @@ void InitGUIslice_gen()
   
   // Create E_ELEM_TEXT16 runtime modifiable text
   static char m_sDisplayText47[17] = "";
-  pElemRef = gslc_ElemCreateTxt(&m_gui,E_ELEM_TEXT16,E_PG_MAIN,(gslc_tsRect){221,30,97,10},
+  pElemRef = gslc_ElemCreateTxt(&m_gui,E_ELEM_TEXT16,E_PG_MAIN,(gslc_tsRect){221,28,97,11},
     (char*)m_sDisplayText47,17,E_BUILTIN5X8);
   gslc_ElemSetCol(&m_gui,pElemRef,GSLC_COL_GRAY,((gslc_tsColor){0,65,128}),GSLC_COL_BLACK);
   m_pElemOutTxt_Ip_Address16 = pElemRef;
@@ -398,7 +403,7 @@ void InitGUIslice_gen()
   gslc_ElemSetTxtEnc(&m_gui,pElemRef,GSLC_TXT_ENC_UTF8);
   
   // Create E_ELEM_TEXT50 text label
-  pElemRef = gslc_ElemCreateTxt(&m_gui,E_ELEM_TEXT50,E_PG_MAIN,(gslc_tsRect){207,30,13,10},
+  pElemRef = gslc_ElemCreateTxt(&m_gui,E_ELEM_TEXT50,E_PG_MAIN,(gslc_tsRect){207,28,13,11},
     (char*)"IP",0,E_BUILTIN5X8);
   gslc_ElemSetTxtAlign(&m_gui,pElemRef,GSLC_ALIGN_MID_RIGHT);
   gslc_ElemSetCol(&m_gui,pElemRef,GSLC_COL_GRAY,((gslc_tsColor){0,65,128}),((gslc_tsColor){0,65,128}));
@@ -425,6 +430,20 @@ void InitGUIslice_gen()
   gslc_ElemSetTxtCol(&m_gui,pElemRef,((gslc_tsColor){135,255,180}));
   gslc_ElemSetCol(&m_gui,pElemRef,GSLC_COL_GRAY,((gslc_tsColor){0,75,153}),GSLC_COL_BLACK);
   m_pElemOutTxt_Weather = pElemRef;
+
+  // Create E_ELEM_BOX_STATUS_BAR box for 8 indicator badges (CRN, GEL, WIN, PMP, NIT, IST, BUZ, MQT)
+  pElemRef = gslc_ElemCreateBox(&m_gui,E_ELEM_BOX_STATUS_BAR,E_PG_MAIN,(gslc_tsRect){5,27,200,13});
+  gslc_ElemSetFillEn(&m_gui,pElemRef,false);
+  gslc_ElemSetFrameEn(&m_gui,pElemRef,false);
+  gslc_ElemSetDrawFunc(&m_gui,pElemRef,&CbDrawStatusBar);
+  m_pElemBox_StatusBar = pElemRef;
+
+  // Create E_ELEM_BOX_WIFI_BARS box for WiFi signal bars
+  pElemRef = gslc_ElemCreateBox(&m_gui,E_ELEM_BOX_WIFI_BARS,E_PG_MAIN,(gslc_tsRect){243,6,18,13});
+  gslc_ElemSetFillEn(&m_gui,pElemRef,false);
+  gslc_ElemSetFrameEn(&m_gui,pElemRef,false);
+  gslc_ElemSetDrawFunc(&m_gui,pElemRef,&CbDrawWifiBars);
+  m_pElemBox_WifiBars = pElemRef;
 
   // create E_ELEM_BTN_WAKE_UP button with text label
   pElemRef = gslc_ElemCreateBtnTxt(&m_gui,E_ELEM_BTN_WAKE_UP,E_PG_MAIN,

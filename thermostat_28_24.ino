@@ -314,6 +314,8 @@ void evaluate_crono(bool force_apply = false);
 void update_wifi_signal_bars();
 void update_indicator_spie(bool force_redraw = false);
 void update_outdoor_temp_display(float t);
+bool CbDrawStatusBar(void* pvGui, void* pvElemRef, gslc_teRedrawType eRedraw);
+bool CbDrawWifiBars(void* pvGui, void* pvElemRef, gslc_teRedrawType eRedraw);
 
 // ------------------------------------------------
 // Headers to include
@@ -382,6 +384,8 @@ gslc_tsElemRef* m_pElemRB_sample2_4= NULL;
 gslc_tsElemRef* m_pElemSlider_temp_offset= NULL;
 gslc_tsElemRef* m_pElemOutTxt_Weather = NULL;
 gslc_tsElemRef* m_pElemOutTxt_SetpointLbl = NULL;
+gslc_tsElemRef* m_pElemBox_StatusBar = NULL;
+gslc_tsElemRef* m_pElemBox_WifiBars  = NULL;
 //<Save_References !End!>
 
 // Define debug message function
@@ -468,6 +472,8 @@ bool CbBtnCommon(void* pvGui,void *pvElemRef,gslc_teTouch eTouch,int16_t nX,int1
         lcd_set_bright();
         gslc_ElemSetVisible(&m_gui,m_pElemBtn_wake_up,false);
         gslc_ElemSetVisible(&m_gui,m_pElemBtn_wake_up2,false);
+        update_indicator_spie(true);
+        update_wifi_signal_bars();
         break;
       case E_ELEM_BTN_MAIN_PAGE:
         previousMillis_lcd = millis();
@@ -1018,10 +1024,10 @@ void fill_buffer(){
 }
 
 
-void update_wifi_signal_bars() {
+bool draw_wifi_signal_bars_raw(gslc_tsGui* pGui, gslc_tsElemRef* pElemRef) {
   // Disegna l'icona con le 4 tacche del Wi-Fi in alto a destra sullo schermo TFT (vicino al tasto MENU)
   // Posizione: X=244, Y=14 (Larghezza: 18px, Altezza: 12px)
-  if (gslc_GetPageCur(&m_gui) != E_PG_MAIN) return;
+  if (gslc_GetPageCur(&m_gui) != E_PG_MAIN) return true;
 
   int rssi = (WiFi.status() == WL_CONNECTED) ? WiFi.RSSI() : -100;
   int bars = 0;
@@ -1049,19 +1055,33 @@ void update_wifi_signal_bars() {
   // Pulisce l'area di disegno del segnale Wi-Fi (background scuro della barra superiore)
   gslc_tsColor bgCol = {0, 65, 128};
   gslc_tsColor offCol = {0, 45, 90}; // Tacca inattiva / spenta
-  gslc_DrawFillRect(&m_gui, (gslc_tsRect){243, 6, 18, 13}, bgCol);
+  gslc_DrawFillRect(pGui, (gslc_tsRect){243, 6, 18, 13}, bgCol);
 
   // Disegna 4 tacche crescenti
-  // Tacca 1 (H=3):  X=244
-  // Tacca 2 (H=6):  X=248
-  // Tacca 3 (H=9):  X=252
-  // Tacca 4 (H=12): X=256
   int heights[4] = {3, 6, 9, 12};
   for (int b = 0; b < 4; b++) {
     int bx = 244 + b * 4;
     int by = 18 - heights[b];
     gslc_tsColor c = (b < bars) ? barCol : offCol;
-    gslc_DrawFillRect(&m_gui, (gslc_tsRect){(int16_t)bx, (int16_t)by, 3, (uint16_t)heights[b]}, c);
+    gslc_DrawFillRect(pGui, (gslc_tsRect){(int16_t)bx, (int16_t)by, 3, (uint16_t)heights[b]}, c);
+  }
+
+  if (pElemRef != NULL) {
+    gslc_ElemSetRedraw(pGui, pElemRef, GSLC_REDRAW_NONE);
+  }
+  return true;
+}
+
+bool CbDrawWifiBars(void* pvGui, void* pvElemRef, gslc_teRedrawType eRedraw) {
+  return draw_wifi_signal_bars_raw((gslc_tsGui*)pvGui, (gslc_tsElemRef*)pvElemRef);
+}
+
+void update_wifi_signal_bars() {
+  if (gslc_GetPageCur(&m_gui) != E_PG_MAIN) return;
+  if (m_pElemBox_WifiBars != NULL) {
+    gslc_ElemSetRedraw(&m_gui, m_pElemBox_WifiBars, GSLC_REDRAW_FULL);
+  } else {
+    draw_wifi_signal_bars_raw(&m_gui, NULL);
   }
 }
 
@@ -1074,13 +1094,9 @@ void draw_spia_badge(int16_t x, int16_t y, uint16_t w, uint16_t h, const char* l
                    GSLC_ALIGN_MID_MID, txtCol, bgCol, 0, 0);
 }
 
-void update_indicator_spie(bool force_redraw) {
-  if (gslc_GetPageCur(&m_gui) != E_PG_MAIN) return;
-
-  static uint8_t last_spia_state[8] = {255, 255, 255, 255, 255, 255, 255, 255};
-  if (force_redraw) {
-    for (int i = 0; i < 8; i++) last_spia_state[i] = 255;
-  }
+bool CbDrawStatusBar(void* pvGui, void* pvElemRef, gslc_teRedrawType eRedraw) {
+  gslc_tsGui* pGui = (gslc_tsGui*)pvGui;
+  gslc_tsElemRef* pElemRef = (gslc_tsElemRef*)pvElemRef;
 
   uint8_t cur_state[8];
   // 0: CRN (Crono settimanale)
@@ -1114,9 +1130,6 @@ void update_indicator_spie(bool force_redraw) {
   static const char* const labels[8] = {"CRN", "GEL", "WIN", "PMP", "NIT", "IST", "BUZ", "MQT"};
 
   for (int i = 0; i < 8; i++) {
-    if (cur_state[i] == last_spia_state[i]) continue;
-    last_spia_state[i] = cur_state[i];
-
     gslc_tsColor bg = col_off_bg, fr = col_off_frame, tx = col_off_txt;
 
     switch (i) {
@@ -1152,6 +1165,46 @@ void update_indicator_spie(bool force_redraw) {
     }
 
     draw_spia_badge(start_x + i * step_x, y, w, h, labels[i], bg, fr, tx);
+  }
+
+  if (pElemRef != NULL) {
+    gslc_ElemSetRedraw(pGui, pElemRef, GSLC_REDRAW_NONE);
+  }
+  return true;
+}
+
+void update_indicator_spie(bool force_redraw) {
+  if (gslc_GetPageCur(&m_gui) != E_PG_MAIN) return;
+
+  static uint8_t last_spia_state[8] = {255, 255, 255, 255, 255, 255, 255, 255};
+  if (force_redraw) {
+    for (int i = 0; i < 8; i++) last_spia_state[i] = 255;
+  }
+
+  uint8_t cur_state[8];
+  cur_state[0] = crono_enabled ? 1 : 0;
+  cur_state[1] = antifrost_active ? 2 : (antifrost_enabled ? 1 : 0);
+  cur_state[2] = open_window_active ? 2 : ((open_window_enabled || ext_window_enabled) ? 1 : 0);
+  cur_state[3] = pump_test_active ? 2 : (pump_protection_enabled ? 1 : 0);
+  cur_state[4] = night_active ? 2 : (night_mode_enabled ? 1 : 0);
+  cur_state[5] = hysteresis_enabled ? 1 : 0;
+  cur_state[6] = (buzzer_enabled && buzzer_vol > 0) ? 1 : 0;
+  cur_state[7] = client.connected() ? 2 : ((strlen(mqtt_server) > 0) ? 1 : 0);
+
+  bool changed = force_redraw;
+  for (int i = 0; i < 8; i++) {
+    if (cur_state[i] != last_spia_state[i]) {
+      last_spia_state[i] = cur_state[i];
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    if (m_pElemBox_StatusBar != NULL) {
+      gslc_ElemSetRedraw(&m_gui, m_pElemBox_StatusBar, GSLC_REDRAW_FULL);
+    } else {
+      CbDrawStatusBar(&m_gui, NULL, GSLC_REDRAW_FULL);
+    }
   }
 }
 
