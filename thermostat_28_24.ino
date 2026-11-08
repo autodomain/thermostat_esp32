@@ -1078,6 +1078,8 @@ void printLocalTime()
 
 void start_ap_portal() {
   if (!ap_mode_active) {
+    WiFi.disconnect(false);
+    delay(50);
     WiFi.mode(WIFI_AP_STA);
     WiFi.softAP("Termostato_AP");
     dnsServer.start(53, "*", WiFi.softAPIP());
@@ -1358,7 +1360,29 @@ void handleRoot() {
   }
 
   bool doScan = webServer.hasArg("scan");
-  int nNets = doScan ? WiFi.scanNetworks() : -1;
+  int16_t nNets = -1;
+  if (doScan) {
+    Serial.println("Avvio scansione reti WiFi...");
+    if (WiFi.getMode() != WIFI_AP_STA && WiFi.getMode() != WIFI_STA) {
+      WiFi.mode(WIFI_AP_STA);
+      delay(50);
+    }
+    if (WiFi.status() != WL_CONNECTED) {
+      WiFi.disconnect(false);
+      delay(80);
+    }
+    WiFi.scanDelete();
+    delay(40);
+    nNets = WiFi.scanNetworks(false, true);
+    if (nNets == WIFI_SCAN_FAILED) {
+      Serial.println("Scansione fallita, secondo tentativo...");
+      delay(150);
+      WiFi.disconnect(false);
+      delay(50);
+      nNets = WiFi.scanNetworks(false, true);
+    }
+    Serial.printf("Scansione reti WiFi terminata: trovate %d reti\n", nNets);
+  }
 
   String zoneName = get_zone_name();
   String zoneSlug = get_zone_slug();
@@ -1629,11 +1653,15 @@ void handleRoot() {
   }
   html += "<p><a class='btn' style='padding:8px 12px;width:auto;' href='/?scan=1'>Scansiona Reti WiFi</a></p>";
   if (doScan) {
-    if (nNets <= 0) {
-      html += "<p>Nessuna rete trovata.</p>";
+    if (nNets < 0) {
+      html += "<p style='color:#f87171;'><b>Scansione non riuscita (codice " + String(nNets) + "). Riprova o digita l'SSID direttamente qui sotto.</b></p>";
+    } else if (nNets == 0) {
+      html += "<p style='color:#facc15;'><b>Nessuna rete 2.4 GHz rilevata nelle vicinanze.</b> Puoi comunque digitare il nome del tuo Wi-Fi manualmente qui sotto.</p>";
     } else {
+      html += "<p style='color:#93c5fd;font-size:13px;'>Trovate <b>" + String(nNets) + "</b> reti. Tocca la tua rete per selezionarla:</p>";
       for (int i = 0; i < nNets; i++) {
         String s = WiFi.SSID(i);
+        if (s.length() == 0) s = "(Rete Nascosta)";
         html += "<div class='net-item' onclick=\"document.getElementById('ssid').value='" + s + "'\">";
         html += "<span><b>" + s + "</b></span><span>" + String(WiFi.RSSI(i)) + " dBm</span></div>";
       }
