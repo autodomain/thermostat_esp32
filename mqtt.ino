@@ -1,4 +1,24 @@
 void update_indicator_spie(bool force_redraw);
+void update_outdoor_temp_display(float t);
+extern bool ext_temp_enabled;
+extern char ext_temp_topic[100];
+extern float ext_temp_val;
+
+float parse_temperature_payload(const String& payload) {
+  String p = payload;
+  p.trim();
+  if (p.startsWith("{")) {
+    DynamicJsonDocument doc(256);
+    DeserializationError err = deserializeJson(doc, p);
+    if (!err) {
+      if (doc.containsKey("temperature")) return doc["temperature"].as<float>();
+      if (doc.containsKey("temp")) return doc["temp"].as<float>();
+      if (doc.containsKey("value")) return doc["value"].as<float>();
+      if (doc.containsKey("state")) return doc["state"].as<float>();
+    }
+  }
+  return p.toFloat();
+}
 
 unsigned long previousMillis_mqtt = 0;
 const unsigned long interval_mqtt_retry = 10000;
@@ -133,6 +153,13 @@ void publish_ha_state() {
   // 16. Stato Relè Caldaia (ON/OFF)
   snprintf(topic, sizeof(topic), "%srelay/state", thermostat_id);
   client.publish(topic, digitalRead(rele_pin) ? "ON" : "OFF", true, 0);
+
+  // 16b. Temperatura Esterna (da MQTT / HA)
+  if (!isnan(ext_temp_val)) {
+    dtostrf(ext_temp_val, 0, 1, buf);
+    snprintf(topic, sizeof(topic), "%soutdoor_temp/state", thermostat_id);
+    client.publish(topic, buf, true, 0);
+  }
 
   // 17-19. Info Gerarchiche Immobile, Piano, Stanza
   snprintf(topic, sizeof(topic), "%sinfo/house", thermostat_id);
@@ -307,6 +334,29 @@ void publish_ha_discovery() {
     String payload;
     serializeJson(doc, payload);
     String discTopic = "homeassistant/sensor/" + devId + "_temp/config";
+    client.publish(discTopic.c_str(), payload.c_str(), true, 0);
+  }
+
+  // 2b. Sensore Temperatura Esterna (da MQTT / Home Assistant)
+  {
+    DynamicJsonDocument doc(512);
+    doc["~"]            = baseTopic;
+    doc["name"]         = "Temperatura Esterna " + zoneName;
+    doc["obj_id"]       = "termostato_" + zoneSlug + "_temp_esterna";
+    doc["uniq_id"]      = devId + "_outdoor_temp";
+    doc["stat_t"]       = "~outdoor_temp/state";
+    doc["avty_t"]       = "~status";
+    doc["dev_cla"]      = "temperature";
+    doc["stat_cla"]     = "measurement";
+    doc["unit_of_meas"] = "°C";
+    doc["icon"]         = "mdi:sun-thermometer-outline";
+    JsonObject dev = doc.createNestedObject("dev");
+    JsonArray ids = dev.createNestedArray("ids");
+    ids.add(devId);
+
+    String payload;
+    serializeJson(doc, payload);
+    String discTopic = "homeassistant/sensor/" + devId + "_outdoor_temp/config";
     client.publish(discTopic.c_str(), payload.c_str(), true, 0);
   }
 
@@ -1007,6 +1057,11 @@ void connect() {
     client.subscribe(thermostat_id + String("clean_screen/set"));
     client.subscribe(thermostat_id + String("ext_win_en/set"));
     client.subscribe(thermostat_id + String("antifrost_th/set"));
+    client.subscribe(thermostat_id + String("outdoor_temp/set"));
+    client.subscribe(thermostat_id + String("ext_temp_en/set"));
+    if (ext_temp_enabled && ext_temp_topic[0] != '\0') {
+      client.subscribe(ext_temp_topic);
+    }
     if (ext_window_enabled && ext_window_topic[0] != '\0') {
       client.subscribe(ext_window_topic);
     }
@@ -1026,8 +1081,31 @@ void messageReceived(String &topic, String &payload) {
     publish_ha_discovery();
     return;
   }
-  if (topic.substring(13) == "temperature") {
-    gslc_ElemSetTxtStr(&m_gui, m_pElemOutTxt_Temp_Outside, payload.c_str());
+  // Gestione Temperatura Esterna da Home Assistant via MQTT
+  snprintf(myConcatenation, sizeof(myConcatenation), "%soutdoor_temp/set", thermostat_id);
+  bool is_outdoor_temp_topic = false;
+  if (topic.equals(myConcatenation)) {
+    is_outdoor_temp_topic = true;
+  } else if (ext_temp_enabled && ext_temp_topic[0] != '\0' && topic.equals(ext_temp_topic)) {
+    is_outdoor_temp_topic = true;
+  } else if (topic.equals("home/outside/temperature")) {
+    is_outdoor_temp_topic = true;
+  }
+
+  if (is_outdoor_temp_topic) {
+    float val = parse_temperature_payload(payload);
+    if (!isnan(val) && val >= -50.0f && val <= 70.0f) {
+      update_outdoor_temp_display(val);
+      Serial.printf("Temperatura Esterna aggiornata da MQTT: %.1f °C\n", val);
+      if (client.connected()) {
+        char outTopic[96];
+        snprintf(outTopic, sizeof(outTopic), "%soutdoor_temp/state", thermostat_id);
+        char outBuf[10];
+        dtostrf(val, 0, 1, outBuf);
+        client.publish(outTopic, outBuf, true, 0);
+      }
+    }
+    return;
   }
   if (topic.substring(0, 5) == "scene") {
     // reserved
@@ -1188,6 +1266,17 @@ void messageReceived(String &topic, String &payload) {
       publish_ha_state();
       play_beep(2600, 25);
     }
+  }
+  snprintf(myConcatenation, sizeof(myConcatenation), "%sext_temp_en/set", thermostat_id);
+  if (topic.equals(myConcatenation)) {
+    ext_temp_enabled = (payload == "ON" || payload == "1" || payload == "true");
+    if (!ext_temp_enabled) update_outdoor_temp_display(NAN);
+    if (client.connected() && ext_temp_enabled && ext_temp_topic[0] != '\0') {
+      client.subscribe(ext_temp_topic);
+    }
+    save_json_config();
+    publish_ha_state();
+    play_beep(2600, 25);
   }
   snprintf(myConcatenation, sizeof(myConcatenation), "%sreboot/set", thermostat_id);
   if (topic.equals(myConcatenation)) {

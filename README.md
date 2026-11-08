@@ -43,6 +43,7 @@ La pagina web interna (raggiungibile all'IP locale es. `http://192.168.1.150` da
    - Switch Modalità Notte con orari di inizio e fine auto-dimming display.
    - Pulsante *Pulisci Schermo* (Child Lock 30s) per pulire il vetro senza premere tasti accidentali.
    - Switch e casella Topic per Sensore Finestra Esterno via MQTT (es. sensore magnetico Zigbee / Shelly).
+   - Switch e Topic per **Temperatura Esterna da Home Assistant (MQTT)**: visualizza `T --.- °C` a destra della data sul display LCD.
    - Soglia antigelo personalizzabile da 3.0 a 10.0 °C.
 5. **Card 5 &mdash; Consumi & Storico Caldaia**:
    - Ore effettive di accensione della caldaia oggi e totale ultimi 7 giorni con tabella storica giorno per giorno.
@@ -92,6 +93,7 @@ All'avvio e ad ogni riconnessione, il termostato pubblica i descrittori di Auto-
 | `number.termostato_<stanza>_antifrost_th` | Cursore | Regolazione soglia emergenza antigelo (3.0..10.0 °C) |
 | `switch.termostato_<stanza>_openwin` | Switch | Rilevamento caduta termica rapida finestra aperta |
 | `switch.termostato_<stanza>_ext_window` | Switch | Abilitazione sensore magnetico finestra wireless MQTT |
+| `sensor.termostato_<stanza>_temp_esterna` | Sensore | Temperatura esterna mostrata a schermo (`T --.- °C`) |
 | `switch.termostato_<stanza>_hysteresis` | Switch | Abilitazione isteresi dinamica |
 | `number.termostato_<stanza>_hysteresis_val` | Cursore | Valore isteresi (0.1..2.0 °C) |
 | `switch.termostato_<stanza>_pump_prot` | Switch | Protezione antiblocco settimanale pompa |

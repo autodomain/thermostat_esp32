@@ -288,12 +288,14 @@ void InitGUIslice_gen()
   pElemRef = gslc_ElemCreateTxt(&m_gui,E_ELEM_TEXT18,E_PG_MAIN,(gslc_tsRect){132,10,10,15},
     (char*)"T",0,E_FREESANS9);
   gslc_ElemSetCol(&m_gui,pElemRef,GSLC_COL_GRAY,((gslc_tsColor){0,65,128}),GSLC_COL_BLACK);
+  gslc_ElemSetTxtCol(&m_gui,pElemRef,((gslc_tsColor){0,136,255}));
   
   // Create E_ELEM_TEXT_TEMP_OUTSIDE runtime modifiable text
   static char m_sDisplayText19[8] = "--.-";
   pElemRef = gslc_ElemCreateTxt(&m_gui,E_ELEM_TEXT_TEMP_OUTSIDE,E_PG_MAIN,(gslc_tsRect){146,10,40,15},
     (char*)m_sDisplayText19,8,E_FREESANS9);
   gslc_ElemSetCol(&m_gui,pElemRef,GSLC_COL_GRAY,((gslc_tsColor){0,65,128}),GSLC_COL_BLACK);
+  gslc_ElemSetTxtCol(&m_gui,pElemRef,((gslc_tsColor){135,211,255}));
   m_pElemOutTxt_Temp_Outside = pElemRef;
   
   // Create E_ELEM_TEXT23 text label

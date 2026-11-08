@@ -384,9 +384,13 @@ def build_pdf(filename="Manuale_Istruzioni_Termostato_Smart.pdf"):
     story.append(Spacer(1, 8))
 
     tech_spie_p = Paragraph(
-        "<b>Tecnologia Anti-Flicker:</b> il display TFT aggiorna solo ed esclusivamente il badge il cui stato è variato "
+        "<b>Tecnologia Anti-Flicker &amp; Temperatura Esterna a Schermo:</b><br/>"
+        "&bull; <b>Spie Intelligenti:</b> il display TFT aggiorna solo ed esclusivamente il badge il cui stato &egrave; variato "
         "(zero sfarfallio e zero impatto sulle prestazioni grafiche). Ogni modifica applicata da Web UI o da Home Assistant "
-        "viene riflessa sul display in meno di 50 millisecondi.",
+        "viene riflessa sul display in meno di 50 millisecondi.<br/>"
+        "&bull; <b>Temperatura Esterna sul Display (<code>T --.- &deg;C</code>):</b> a destra della data &egrave; collocato il segnaposto "
+        "della temperatura esterna, illuminato in ciano brillante. Pu&ograve; essere impostato liberamente da Home Assistant tramite topic MQTT "
+        "(es. da stazione meteo, OpenWeatherMap o sensore wireless esterno). In assenza di dati visualizza il segnaposto <code>T --.- &deg;C</code>.",
         style_box_text
     )
     story.append(make_box(tech_spie_p, "#f1f5f9", "#0284c7"))
@@ -411,7 +415,7 @@ def build_pdf(filename="Manuale_Istruzioni_Termostato_Smart.pdf"):
         "&bull; <b>Pulsante 'Salva (Solo Manuale)' (Grigio/Azzurro):</b> salva le modifiche agli orari ma lascia il termostato in modalità manuale libera.<br/>"
         "&bull; <b>Pulsante 'Ferma Crono' (Ambra):</b> disattiva istantaneamente il cronotermostato tornando in modalità manuale con setpoint libero.",
         "<b>Card 3 &mdash; Meteo Barometrico &amp; Comfort:</b> punto di rugiada, indice Humidex di benessere termico e pressione atmosferica a 3 ore.",
-        "<b>Card 4 &mdash; Funzioni Avanzate &amp; Sicurezza:</b> cursori e toggle per Isteresi (0.1..2.0 °C), Protezione Pompa, Modalità Notte, Blocco Pulizia e Sensore Finestra Esterno.",
+        "<b>Card 4 &mdash; Funzioni Avanzate &amp; Sicurezza:</b> cursori e toggle per Isteresi (0.1..2.0 °C), Protezione Pompa, Modalità Notte, Blocco Pulizia, Sensore Finestra Esterno e <b>Temperatura Esterna MQTT</b> (per visualizzare <code>T 18.5 &deg;C</code> sul display).",
         "<b>Card 5 &mdash; Consumi &amp; Storico Caldaia:</b> ore bruciate oggi e cronologia dettagliata giorno per giorno degli ultimi 7 giorni.",
         "<b>Card 6 &mdash; Connessione Wi-Fi:</b> scansione reti in tempo reale con intensità RSSI e connessione a nuovo router senza perdere i dati.",
         "<b>Card 7 &mdash; Configurazione MQTT &amp; Multi-Piano:</b> selezione intuitiva a pillole di Casa, Piano e Stanza con topic auto-generati."
@@ -534,6 +538,11 @@ def build_pdf(filename="Manuale_Istruzioni_Termostato_Smart.pdf"):
             Paragraph("<code>switch.termostato_&lt;stanza&gt;_ext_window</code>", style_table_cell),
             Paragraph("Switch", style_table_cell),
             Paragraph("Collega il sensore magnetico porta/finestra wireless via MQTT.", style_table_cell)
+        ],
+        [
+            Paragraph("<code>sensor.termostato_&lt;stanza&gt;_temp_esterna</code>", style_table_cell),
+            Paragraph("Sensore °C", style_table_cell),
+            Paragraph("Temperatura esterna visualizzata a schermo (inviata da HA a <code>~outdoor_temp/set</code>).", style_table_cell)
         ],
         [
             Paragraph("<code>switch.termostato_&lt;stanza&gt;_hysteresis</code>", style_table_cell),

@@ -241,6 +241,11 @@ bool ext_window_enabled = false;
 char ext_window_topic[100] = "";
 bool ext_window_open = false;
 
+// 9. Temperatura Esterna da Home Assistant via MQTT
+bool ext_temp_enabled = true;
+char ext_temp_topic[100] = "home/outside/temperature";
+float ext_temp_val = NAN;
+
 void trigger_child_lock(uint32_t seconds = 30);
 void trigger_pump_test(uint32_t seconds = 60);
 
@@ -308,6 +313,7 @@ void play_beep(int freq = 2600, int duration_ms = 25);
 void evaluate_crono(bool force_apply = false);
 void update_wifi_signal_bars();
 void update_indicator_spie(bool force_redraw = false);
+void update_outdoor_temp_display(float t);
 
 // ------------------------------------------------
 // Headers to include
@@ -472,6 +478,7 @@ bool CbBtnCommon(void* pvGui,void *pvElemRef,gslc_teTouch eTouch,int16_t nX,int1
         gslc_SetPageCur(&m_gui,E_PG_MAIN);
         update_wifi_signal_bars();
         update_indicator_spie(true);
+        update_outdoor_temp_display(ext_temp_val);
         break;
       case E_ELEM_BTN10:
         play_beep(2000, 80);
@@ -609,6 +616,8 @@ void save_json_config() {
   json["night_end"]     = night_end_hour;
   json["ext_win_en"]    = ext_window_enabled ? 1 : 0;
   json["ext_win_top"]   = ext_window_topic;
+  json["ext_temp_en"]   = ext_temp_enabled ? 1 : 0;
+  json["ext_temp_top"]  = ext_temp_topic;
 
   JsonArray sched = json.createNestedArray("sched");
   for (int d = 0; d < 2; d++) {
@@ -1143,6 +1152,19 @@ void update_indicator_spie(bool force_redraw) {
     }
 
     draw_spia_badge(start_x + i * step_x, y, w, h, labels[i], bg, fr, tx);
+  }
+}
+
+void update_outdoor_temp_display(float t) {
+  ext_temp_val = t;
+  char buf[10];
+  if (isnan(t)) {
+    strlcpy(buf, "--.-", sizeof(buf));
+  } else {
+    dtostrf(t, 0, 1, buf);
+  }
+  if (m_pElemOutTxt_Temp_Outside != NULL) {
+    gslc_ElemSetTxtStr(&m_gui, m_pElemOutTxt_Temp_Outside, buf);
   }
 }
 
@@ -1708,6 +1730,18 @@ void handleRoot() {
   html += "<div><label class='lbl'>Delta Isteresi (&deg;C)</label><input type='number' step='0.1' min='0.1' max='2.0' name='hyst_val' value='" + String(hysteresis_val, 1) + "'></div>";
   html += "</div></div>";
 
+  // 7. Temperatura Esterna da Home Assistant (MQTT)
+  html += "<div style='background:#0b2545;padding:10px;border-radius:8px;margin-bottom:10px;'>";
+  String extTempStatus = ext_temp_enabled ? (!isnan(ext_temp_val) ? ("<span style='color:#38bdf8'><b>" + String(ext_temp_val, 1) + " &deg;C</b> (Ricevuta)</span>") : "<span style='color:#facc15'>In attesa dati (--.- &deg;C)</span>") : "<span style='color:#94a3b8'>Disabilitata</span>";
+  html += "<div style='display:flex;justify-content:space-between;align-items:center;'>";
+  html += "<b>7. Temperatura Esterna da HA (MQTT):</b> " + extTempStatus;
+  html += "<a class='btn' style='padding:5px 10px;font-size:12px;background:" + String(ext_temp_enabled ? "#dc2626" : "#16a34a") + ";' href='/ctrl?ext_temp_en=" + String(ext_temp_enabled ? 0 : 1) + "#adv-box'>" + (ext_temp_enabled ? "Disabilita" : "Abilita") + "</a>";
+  html += "</div>";
+  html += "<label class='lbl' style='margin-top:6px;display:block;'>Topic MQTT Temperatura Esterna (da Home Assistant o Meteo)</label>";
+  html += "<input name='ext_temp_top' value='" + String(ext_temp_topic) + "' placeholder='es. home/outside/temperature o sensore HA'>";
+  html += "<p style='font-size:11px;color:#8da9c4;margin:4px 0 0 0;'>Mostrata sul display LCD a destra della data (segnaposto <code>T --.- &deg;C</code>). In HA puoi inviarla anche a <code>" + String(thermostat_id) + "outdoor_temp/set</code>.</p>";
+  html += "</div>";
+
   html += "<button type='submit' style='background:#10b981;font-size:16px;font-weight:bold;'>Salva Impostazioni Avanzate</button>";
   html += "</form></details>";
 
@@ -2022,6 +2056,17 @@ void setup_web_server() {
       publish_ha_state();
       play_beep(2600, 25);
     }
+    if (webServer.hasArg("ext_temp_en")) {
+      ext_temp_enabled = (webServer.arg("ext_temp_en").toInt() != 0);
+      if (!ext_temp_enabled) {
+        update_outdoor_temp_display(NAN);
+      } else if (client.connected() && ext_temp_topic[0] != '\0') {
+        client.subscribe(ext_temp_topic);
+      }
+      save_json_config();
+      publish_ha_state();
+      play_beep(2600, 25);
+    }
     if (webServer.hasArg("antifrost_th")) {
       float ath = webServer.arg("antifrost_th").toFloat();
       if (!isnan(ath) && ath >= 3.0f && ath <= 10.0f) {
@@ -2058,6 +2103,17 @@ void setup_web_server() {
       ext_window_topic[sizeof(ext_window_topic) - 1] = '\0';
       if (client.connected() && ext_window_enabled && ext_window_topic[0] != '\0') {
         client.subscribe(ext_window_topic);
+      }
+    }
+    if (webServer.hasArg("ext_temp_en")) {
+      ext_temp_enabled = (webServer.arg("ext_temp_en").toInt() != 0);
+      if (!ext_temp_enabled) update_outdoor_temp_display(NAN);
+    }
+    if (webServer.hasArg("ext_temp_top")) {
+      strncpy(ext_temp_topic, webServer.arg("ext_temp_top").c_str(), sizeof(ext_temp_topic) - 1);
+      ext_temp_topic[sizeof(ext_temp_topic) - 1] = '\0';
+      if (client.connected() && ext_temp_enabled && ext_temp_topic[0] != '\0') {
+        client.subscribe(ext_temp_topic);
       }
     }
     if (webServer.hasArg("antifrost_th")) {
@@ -2280,6 +2336,7 @@ void setup()
   dtostrf(temperature_offset, 4, 1, buffer);
   gslc_ElemSetTxtStr(&m_gui,m_pElemOutTxt_temp_offset,buffer);
   gslc_ElemSetTxtStr(&m_gui,m_pElemOutTxt_Ip_Address16,"WiFi init...");
+  update_outdoor_temp_display(NAN);
   gslc_Update(&m_gui);
 
   // Read configuration from FS json
@@ -2359,6 +2416,12 @@ void setup()
           }
           if (json["ext_win_top"].is<const char*>()) {
             strncpy(ext_window_topic, json["ext_win_top"].as<const char*>(), sizeof(ext_window_topic) - 1);
+          }
+          if (json["ext_temp_en"].is<int>()) {
+            ext_temp_enabled = (json["ext_temp_en"].as<int>() != 0);
+          }
+          if (json["ext_temp_top"].is<const char*>()) {
+            strncpy(ext_temp_topic, json["ext_temp_top"].as<const char*>(), sizeof(ext_temp_topic) - 1);
           }
           if (json["sched"].is<JsonArray>()) {
             JsonArray sched = json["sched"].as<JsonArray>();
