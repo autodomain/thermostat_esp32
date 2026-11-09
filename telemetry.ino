@@ -7,10 +7,10 @@ int  telemetry_port     = 8088;
 unsigned long last_telemetry_ms = 0;
 const unsigned long TELEMETRY_INTERVAL_MS = 15UL * 60UL * 1000UL; // 15 minuti
 
-void send_telemetry_now() {
+bool send_telemetry_now() {
   if (WiFi.status() != WL_CONNECTED) {
     Serial.printf("[TELEMETRY] WiFi non connesso (stato=%d), invio annullato\n", (int)WiFi.status());
-    return;
+    return false;
   }
 
   WiFiClient client;
@@ -18,7 +18,7 @@ void send_telemetry_now() {
 
   if (!client.connect(telemetry_host, telemetry_port)) {
     Serial.println("[TELEMETRY] Connessione al server fallita");
-    return;
+    return false;
   }
 
   StaticJsonDocument<384> doc;
@@ -53,18 +53,20 @@ void send_telemetry_now() {
   client.printf("Content-Length: %u\r\n\r\n", payload.length());
   client.print(payload);
 
-  // Lettura breve dell'header di risposta HTTP
+  bool success = false;
   unsigned long timeout = millis();
   while (client.connected() && millis() - timeout < 2000UL) {
     if (client.available()) {
       String line = client.readStringUntil('\n');
       if (line.startsWith("HTTP/1.1 200") || line.startsWith("HTTP/1.0 200")) {
         Serial.printf("[TELEMETRY] Inviata con successo a %s:%d\n", telemetry_host, telemetry_port);
+        success = true;
       }
       break;
     }
   }
   client.stop();
+  return success;
 }
 
 void handle_telemetry() {
@@ -72,14 +74,20 @@ void handle_telemetry() {
     return;
   }
   unsigned long now = millis();
-  // Primo invio dopo 25 secondi dall'avvio
+  // Primo invio dopo 5 secondi dall'avvio; se fallisce ritenta ogni 15 secondi
   if (last_telemetry_ms == 0) {
-    if (now >= 25000UL) {
-      last_telemetry_ms = now;
-      send_telemetry_now();
+    if (now >= 5000UL) {
+      if (send_telemetry_now()) {
+        last_telemetry_ms = now;
+      } else {
+        last_telemetry_ms = now - TELEMETRY_INTERVAL_MS + 15000UL;
+      }
     }
   } else if (now - last_telemetry_ms >= TELEMETRY_INTERVAL_MS) {
-    last_telemetry_ms = now;
-    send_telemetry_now();
+    if (send_telemetry_now()) {
+      last_telemetry_ms = now;
+    } else {
+      last_telemetry_ms = now - TELEMETRY_INTERVAL_MS + 15000UL;
+    }
   }
 }

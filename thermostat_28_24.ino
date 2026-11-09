@@ -367,7 +367,7 @@ void save_state_eeprom();
 void publish_ha_discovery();
 void publish_ha_state();
 void handle_telemetry();
-void send_telemetry_now();
+bool send_telemetry_now();
 String get_zone_name();
 String get_zone_slug();
 String get_house_name();
