@@ -521,11 +521,28 @@ HTML_DASHBOARD = '''<!DOCTYPE html>
         setInterval(updateClock, 1000);
         updateClock();
 
+        function parseDateUTC(dateString) {
+            if (!dateString) return null;
+            let s = dateString.trim().replace(' ', 'T');
+            if (!s.endsWith('Z') && !s.includes('+')) {
+                s += 'Z';
+            }
+            return new Date(s);
+        }
+
+        function formatLocalDate(dateString) {
+            const d = parseDateUTC(dateString);
+            if (!d || isNaN(d)) return "-";
+            return d.toLocaleString([], { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        }
+
         function timeAgo(dateString) {
             if (!dateString) return "Mai";
-            const date = new Date(dateString.replace(' ', 'T'));
+            const date = parseDateUTC(dateString);
+            if (!date || isNaN(date)) return "-";
             const now = new Date();
-            const sec = Math.round((now - date) / 1000);
+            const sec = Math.max(0, Math.round((now.getTime() - date.getTime()) / 1000));
+            if (sec < 5) return "Adesso";
             if (sec < 60) return `${sec}s fa`;
             if (sec < 3600) return `${Math.floor(sec/60)}m fa`;
             if (sec < 86400) return `${Math.floor(sec/3600)}h fa`;
@@ -585,7 +602,7 @@ HTML_DASHBOARD = '''<!DOCTYPE html>
                                 <td>${d.last_humidity ? d.last_humidity.toFixed(0) + '%' : '-'}</td>
                                 <td>${heatBadge}</td>
                                 <td>${d.last_rssi ? d.last_rssi + ' dBm' : '-'}</td>
-                                <td><span title="${d.last_seen}">${timeAgo(d.last_seen)}</span></td>
+                                <td><span title="Ultimo pacchetto: ${formatLocalDate(d.last_seen)}">${timeAgo(d.last_seen)}</span></td>
                                 <td>
                                     <div class="actions-cell">
                                         <button class="btn-hist" onclick="viewHistory('${d.mac}')" title="Visualizza storico telemetria">Storico</button>
@@ -625,7 +642,7 @@ HTML_DASHBOARD = '''<!DOCTYPE html>
                                 <td>${renderBits(outputsMask, 8)}</td>
                                 <td><strong>${tempLm75}</strong></td>
                                 <td>${pwmBk}</td>
-                                <td><span title="${d.last_seen}">${timeAgo(d.last_seen)}</span></td>
+                                <td><span title="Ultimo pacchetto: ${formatLocalDate(d.last_seen)}">${timeAgo(d.last_seen)}</span></td>
                                 <td>
                                     <div class="actions-cell">
                                         <button class="btn-hist" onclick="viewHistory('${d.mac}')" title="Visualizza storico telemetria">Storico</button>
@@ -662,7 +679,7 @@ HTML_DASHBOARD = '''<!DOCTYPE html>
                                 <td>${nodesCount}</td>
                                 <td>${throughput}</td>
                                 <td>${freeRam}</td>
-                                <td><span title="${d.last_seen}">${timeAgo(d.last_seen)}</span></td>
+                                <td><span title="Ultimo pacchetto: ${formatLocalDate(d.last_seen)}">${timeAgo(d.last_seen)}</span></td>
                                 <td>
                                     <div class="actions-cell">
                                         <button class="btn-hist" onclick="viewHistory('${d.mac}')" title="Visualizza storico telemetria">Storico</button>
@@ -715,7 +732,7 @@ HTML_DASHBOARD = '''<!DOCTYPE html>
                 }
                 rows.innerHTML = data.map(h => `
                     <tr>
-                        <td>${h.timestamp}</td>
+                        <td>${formatLocalDate(h.timestamp)}</td>
                         <td><span class="badge ${h.device_type === 'io16' ? 'badge-io16' : (h.device_type === 'gateway' ? 'badge-gw' : 'badge-fw')}">${h.device_type || 'thermostat'}</span></td>
                         <td><strong>${h.temp != null ? h.temp.toFixed(1) + '°C' : '-'}</strong></td>
                         <td>${h.heating ? '<span style="color:#f97316">ATTIVO</span>' : 'OFF'}</td>
