@@ -395,7 +395,7 @@ HTML_DASHBOARD = '''<!DOCTYPE html>
                     const heatBadge = d.last_heating 
                         ? '<span class="badge badge-heat-on">&bull; ACCESA</span>' 
                         : '<span class="badge badge-heat-off">SPENTA</span>';
-                    const hwName = d.model === 'cyd' ? 'CYD 2.8" TFT' : (d.model === 'az_touch' ? 'AZ-Touch 2.4"' : (d.model || 'ESP32'));
+                    const hwName = d.model === 'cyd' ? 'CYD 2.8&Prime;' : (d.model === 'az_touch' ? 'AZ-Touch 2.4&Prime;' : (d.model || 'ESP32'));
                     
                     return `
                         <tr>
@@ -412,7 +412,7 @@ HTML_DASHBOARD = '''<!DOCTYPE html>
                             <td>
                                 <div class="actions-cell">
                                     <button class="btn-hist" onclick="viewHistory('${d.mac}')" title="Visualizza storico telemetria">Storico</button>
-                                    <button class="btn-del" onclick="deleteDevice('${d.mac}', '${hwName}')" title="Elimina dispositivo">Elimina</button>
+                                    <button class="btn-del" onclick="deleteDevice('${d.mac}')" title="Elimina dispositivo">Elimina</button>
                                 </div>
                             </td>
                         </tr>
@@ -423,8 +423,8 @@ HTML_DASHBOARD = '''<!DOCTYPE html>
             }
         }
 
-        async function deleteDevice(mac, name) {
-            if (!confirm(`Sei sicuro di voler eliminare definitivamente il dispositivo ${name} (${mac}) dal database?\nL'operazione rimuoverà la scheda e tutto il relativo storico.`)) {
+        async function deleteDevice(mac) {
+            if (!confirm("Sei sicuro di voler eliminare definitivamente il dispositivo " + mac + " dal database?\nL'operazione rimuoverà la scheda e tutto il relativo storico.")) {
                 return;
             }
             try {
@@ -435,7 +435,7 @@ HTML_DASHBOARD = '''<!DOCTYPE html>
                 });
                 const result = await res.json();
                 if (result.status === 'ok') {
-                    loadDevices();
+                    await loadDevices();
                 } else {
                     alert('Errore eliminazione: ' + (result.error || 'sconosciuto'));
                 }
