@@ -3144,6 +3144,9 @@ void handle_serial_commands() {
         if (serial_cmd_buf == "VER" || serial_cmd_buf == "VERSION") {
           Serial.printf("{\"app\":\"termostato_smart\",\"version\":\"%s\",\"hw\":\"%s\",\"build\":\"%s\",\"mac\":\"%012llX\"}\n",
                         FIRMWARE_VERSION, HARDWARE_MODEL_CODE, FIRMWARE_BUILD_DATE, ESP.getEfuseMac());
+        } else if (serial_cmd_buf == "STATUS" || serial_cmd_buf == "STAT") {
+          Serial.printf("{\"wifi_status\":%d,\"ip\":\"%s\",\"ap\":%s,\"mac\":\"%s\"}\n",
+                        (int)WiFi.status(), WiFi.localIP().toString().c_str(), ap_mode_active ? "true" : "false", WiFi.macAddress().c_str());
         } else if (serial_cmd_buf == "TELEM" || serial_cmd_buf == "TELEMETRY") {
           send_telemetry_now();
           Serial.println("{\"telemetry\":\"sent\"}");

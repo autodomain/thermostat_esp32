@@ -9,6 +9,7 @@ const unsigned long TELEMETRY_INTERVAL_MS = 15UL * 60UL * 1000UL; // 15 minuti
 
 void send_telemetry_now() {
   if (WiFi.status() != WL_CONNECTED) {
+    Serial.printf("[TELEMETRY] WiFi non connesso (stato=%d), invio annullato\n", (int)WiFi.status());
     return;
   }
 
