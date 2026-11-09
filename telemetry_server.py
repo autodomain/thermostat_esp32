@@ -3,6 +3,9 @@ import sys
 import json
 import sqlite3
 import datetime
+import threading
+import time
+import urllib.request
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
@@ -740,6 +743,148 @@ HTML_DASHBOARD = '''<!DOCTYPE html>
 </html>
 '''
 
+def ingest_telemetry_dict(data, client_ip="127.0.0.1"):
+    mac = data.get("mac") or data.get("id")
+    if not mac:
+        if "node_id" in data:
+            gw = data.get("gateway_id", "gw")
+            mac = f"io16_{gw}_{data['node_id']}"
+        else:
+            return False, "Missing mac or id field"
+
+    now_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    
+    # Detect device_type
+    dtype = data.get("device_type")
+    model = data.get("model", "")
+    if not dtype:
+        if "io16" in model.lower() or "node_id" in data:
+            dtype = "io16"
+        elif "gateway" in model.lower() or "atmega" in model.lower():
+            dtype = "gateway"
+        else:
+            dtype = "thermostat"
+
+    version = data.get("version", "v2.5.0")
+    node_id = data.get("node_id")
+    gateway_id = data.get("gateway_id")
+    temp = data.get("temp")
+    target_temp = data.get("target_temp")
+    humidity = data.get("humidity")
+    heating = 1 if data.get("heating") else 0
+    mode = data.get("mode", 0)
+    rssi = data.get("rssi", 0)
+    uptime = data.get("uptime_s", 0)
+    free_heap = data.get("free_heap") or data.get("free_ram", 0)
+
+    # Collect all extra properties
+    known_keys = {"mac", "id", "device_type", "model", "version", "temp", "target_temp", 
+                  "humidity", "heating", "mode", "rssi", "uptime_s", "free_heap", "free_ram", 
+                  "node_id", "gateway_id"}
+    extra_dict = {k: v for k, v in data.items() if k not in known_keys}
+    if node_id is not None:
+        extra_dict["node_id"] = node_id
+    if gateway_id:
+        extra_dict["gateway_id"] = gateway_id
+    extra_json = json.dumps(extra_dict) if extra_dict else None
+
+    conn = sqlite3.connect(DB_PATH, timeout=10.0)
+    cur = conn.cursor()
+
+    # Update or insert device
+    cur.execute('''
+    INSERT INTO devices (
+        mac, device_type, model, version, last_ip, node_id, gateway_id,
+        first_seen, last_seen, last_temp, last_target, last_humidity,
+        last_heating, last_rssi, last_uptime, last_heap, extra_json, total_packets
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+    ON CONFLICT(mac) DO UPDATE SET
+        device_type = excluded.device_type,
+        model = excluded.model,
+        version = excluded.version,
+        last_ip = excluded.last_ip,
+        node_id = excluded.node_id,
+        gateway_id = excluded.gateway_id,
+        last_seen = excluded.last_seen,
+        last_temp = excluded.last_temp,
+        last_target = excluded.last_target,
+        last_humidity = excluded.last_humidity,
+        last_heating = excluded.last_heating,
+        last_rssi = excluded.last_rssi,
+        last_uptime = excluded.last_uptime,
+        last_heap = excluded.last_heap,
+        extra_json = excluded.extra_json,
+        total_packets = devices.total_packets + 1
+    ''', (mac, dtype, model, version, client_ip, node_id, gateway_id,
+          now_str, now_str, temp, target_temp, humidity, heating, rssi, uptime, free_heap, extra_json))
+
+    # Insert history record
+    cur.execute('''
+    INSERT INTO telemetry_history (
+        mac, device_type, timestamp, temp, target_temp, humidity,
+        heating, mode, rssi, free_heap, uptime_s, extra_json
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (mac, dtype, now_str, temp, target_temp, humidity, heating, mode, rssi, free_heap, uptime, extra_json))
+
+    # Se il payload include nodi IO16 aggregati dal Gateway, li registra o aggiorna in batch
+    nodes_list = data.get("nodes")
+    if isinstance(nodes_list, list):
+        gw_mac = mac
+        for n in nodes_list:
+            if not isinstance(n, dict):
+                continue
+            n_id = n.get("node_id") if n.get("node_id") is not None else n.get("id")
+            if n_id is None:
+                continue
+            node_mac = f"io16_{gw_mac}_{n_id}"
+            node_model = n.get("model", "IO16 Keyboard")
+            node_ver = n.get("version", version)
+            node_temp = n.get("temp_lm75") if n.get("temp_lm75") is not None else n.get("temp")
+            node_bus = n.get("bus", 0)
+            node_inputs = n.get("inputs", 0)
+            node_outputs = n.get("outputs", 0)
+            node_bk = n.get("backlight", 80)
+
+            node_extra = {
+                "node_id": n_id,
+                "gateway_id": gw_mac,
+                "bus": node_bus,
+                "inputs": node_inputs,
+                "outputs": node_outputs,
+                "temp_lm75": node_temp,
+                "backlight": node_bk
+            }
+            for k, v in n.items():
+                if k not in node_extra and k not in ("node_id", "id", "model", "version"):
+                    node_extra[k] = v
+
+            cur.execute('''
+            INSERT INTO devices (
+                mac, device_type, model, version, last_ip, node_id, gateway_id,
+                first_seen, last_seen, last_temp, last_target, last_humidity,
+                last_heating, last_rssi, last_uptime, last_heap, extra_json, total_packets
+            )
+            VALUES (?, 'io16', ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 0, 0, ?, 0, ?, 1)
+            ON CONFLICT(mac) DO UPDATE SET
+                device_type = 'io16',
+                model = excluded.model,
+                version = excluded.version,
+                last_ip = excluded.last_ip,
+                node_id = excluded.node_id,
+                gateway_id = excluded.gateway_id,
+                last_seen = excluded.last_seen,
+                last_temp = excluded.last_temp,
+                extra_json = excluded.extra_json,
+                total_packets = devices.total_packets + 1
+            ''', (node_mac, node_model, node_ver, client_ip, n_id, gw_mac,
+                  now_str, now_str, node_temp, n.get("uptime_s", 0), json.dumps(node_extra)))
+
+    conn.commit()
+    conn.close()
+    return True, dtype
+
 class TelemetryHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     timeout = 5
@@ -939,153 +1084,81 @@ class TelemetryHandler(BaseHTTPRequestHandler):
             self._send_json({"error": f"Invalid JSON payload: {e}"}, 400)
             return
 
-        mac = data.get("mac") or data.get("id")
-        if not mac:
-            # Fallback for IO16: if node_id given, form unique ID
-            if "node_id" in data:
-                gw = data.get("gateway_id", "gw")
-                mac = f"io16_{gw}_{data['node_id']}"
-            else:
-                self._send_json({"error": "Missing mac or id field"}, 400)
-                return
+        ok, res = ingest_telemetry_dict(data, self.client_address[0])
+        if not ok:
+            self._send_json({"error": res}, 400)
+            return
 
         now_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-        client_ip = self.client_address[0]
-        
-        # Detect device_type
-        dtype = data.get("device_type")
-        model = data.get("model", "")
-        if not dtype:
-            if "io16" in model.lower() or "node_id" in data:
-                dtype = "io16"
-            elif "gateway" in model.lower() or "atmega" in model.lower():
-                dtype = "gateway"
-            else:
-                dtype = "thermostat"
+        self._send_json({"status": "ok", "device_type": res, "received_at": now_str})
 
-        version = data.get("version", "v2.5.0")
-        node_id = data.get("node_id")
-        gateway_id = data.get("gateway_id")
-        temp = data.get("temp")
-        target_temp = data.get("target_temp")
-        humidity = data.get("humidity")
-        heating = 1 if data.get("heating") else 0
-        mode = data.get("mode", 0)
-        rssi = data.get("rssi", 0)
-        uptime = data.get("uptime_s", 0)
-        free_heap = data.get("free_heap") or data.get("free_ram", 0)
-
-        # Collect all extra properties
-        known_keys = {"mac", "id", "device_type", "model", "version", "temp", "target_temp", 
-                      "humidity", "heating", "mode", "rssi", "uptime_s", "free_heap", "free_ram", 
-                      "node_id", "gateway_id"}
-        extra_dict = {k: v for k, v in data.items() if k not in known_keys}
-        if node_id is not None:
-            extra_dict["node_id"] = node_id
-        if gateway_id:
-            extra_dict["gateway_id"] = gateway_id
-        extra_json = json.dumps(extra_dict) if extra_dict else None
-
-        conn = sqlite3.connect(DB_PATH, timeout=10.0)
-        cur = conn.cursor()
-
-        # Update or insert device
-        cur.execute('''
-        INSERT INTO devices (
-            mac, device_type, model, version, last_ip, node_id, gateway_id,
-            first_seen, last_seen, last_temp, last_target, last_humidity,
-            last_heating, last_rssi, last_uptime, last_heap, extra_json, total_packets
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
-        ON CONFLICT(mac) DO UPDATE SET
-            device_type = excluded.device_type,
-            model = excluded.model,
-            version = excluded.version,
-            last_ip = excluded.last_ip,
-            node_id = excluded.node_id,
-            gateway_id = excluded.gateway_id,
-            last_seen = excluded.last_seen,
-            last_temp = excluded.last_temp,
-            last_target = excluded.last_target,
-            last_humidity = excluded.last_humidity,
-            last_heating = excluded.last_heating,
-            last_rssi = excluded.last_rssi,
-            last_uptime = excluded.last_uptime,
-            last_heap = excluded.last_heap,
-            extra_json = excluded.extra_json,
-            total_packets = devices.total_packets + 1
-        ''', (mac, dtype, model, version, client_ip, node_id, gateway_id,
-              now_str, now_str, temp, target_temp, humidity, heating, rssi, uptime, free_heap, extra_json))
-
-        # Insert history record
-        cur.execute('''
-        INSERT INTO telemetry_history (
-            mac, device_type, timestamp, temp, target_temp, humidity,
-            heating, mode, rssi, free_heap, uptime_s, extra_json
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (mac, dtype, now_str, temp, target_temp, humidity, heating, mode, rssi, free_heap, uptime, extra_json))
-
-        # Se il payload include nodi IO16 aggregati dal Gateway, li registra o aggiorna in batch
-        nodes_list = data.get("nodes")
-        if isinstance(nodes_list, list):
-            gw_mac = mac
-            for n in nodes_list:
-                if not isinstance(n, dict):
-                    continue
-                n_id = n.get("node_id") if n.get("node_id") is not None else n.get("id")
-                if n_id is None:
-                    continue
-                node_mac = f"io16_{gw_mac}_{n_id}"
-                node_model = n.get("model", "IO16 Keyboard")
-                node_ver = n.get("version", version)
-                node_temp = n.get("temp_lm75") if n.get("temp_lm75") is not None else n.get("temp")
-                node_bus = n.get("bus", 0)
-                node_inputs = n.get("inputs", 0)
-                node_outputs = n.get("outputs", 0)
-                node_bk = n.get("backlight", 80)
-
-                node_extra = {
-                    "node_id": n_id,
-                    "gateway_id": gw_mac,
-                    "bus": node_bus,
-                    "inputs": node_inputs,
-                    "outputs": node_outputs,
-                    "temp_lm75": node_temp,
-                    "backlight": node_bk
-                }
-                for k, v in n.items():
-                    if k not in node_extra and k not in ("node_id", "id", "model", "version"):
-                        node_extra[k] = v
-
-                cur.execute('''
-                INSERT INTO devices (
-                    mac, device_type, model, version, last_ip, node_id, gateway_id,
-                    first_seen, last_seen, last_temp, last_target, last_humidity,
-                    last_heating, last_rssi, last_uptime, last_heap, extra_json, total_packets
-                )
-                VALUES (?, 'io16', ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 0, 0, ?, 0, ?, 1)
-                ON CONFLICT(mac) DO UPDATE SET
-                    device_type = 'io16',
-                    model = excluded.model,
-                    version = excluded.version,
-                    last_ip = excluded.last_ip,
-                    node_id = excluded.node_id,
-                    gateway_id = excluded.gateway_id,
-                    last_seen = excluded.last_seen,
-                    last_temp = excluded.last_temp,
-                    extra_json = excluded.extra_json,
-                    total_packets = devices.total_packets + 1
-                ''', (node_mac, node_model, node_ver, client_ip, n_id, gw_mac,
-                      now_str, now_str, node_temp, n.get("uptime_s", 0), json.dumps(node_extra)))
-
-        conn.commit()
-        conn.close()
-
-        self._send_json({"status": "ok", "device_type": dtype, "received_at": now_str})
+def poll_gateway_loop():
+    """Thread in background che interroga periodicamente il Gateway Ethernet (192.168.1.66) e registra la telemetria."""
+    print("[Telemetry] Poller Gateway Ethernet avviato (intervallo 15s)...")
+    while True:
+        try:
+            url = "http://192.168.1.66/api/status"
+            req = urllib.request.Request(url, headers={'User-Agent': 'AutodomainTelemetryHub/1.0'})
+            with urllib.request.urlopen(req, timeout=4.0) as resp:
+                if resp.status == 200:
+                    d = json.loads(resp.read().decode('utf-8'))
+                    gw_mac = "AA:ED:AB:FE:AA:F2"
+                    dbg = d.get("dbg", {})
+                    ram = dbg.get("ram", 4745)
+                    up = dbg.get("up", 0)
+                    temp = d.get("temp")
+                    ptx = d.get("ptx", 0)
+                    prx = d.get("prx", 0)
+                    health = d.get("health", 100)
+                    mqtt_conn = (d.get("mqtt") == 1)
+                    
+                    nds_raw = d.get("nds", [])
+                    nodes_list = []
+                    for n in nds_raw:
+                        if not isinstance(n, dict):
+                            continue
+                        nid = n.get("i")
+                        if nid is None:
+                            continue
+                        nodes_list.append({
+                            "node_id": nid,
+                            "model": f"IO16 Keyboard vA",
+                            "version": "2.1-beta",
+                            "bus": n.get("b", 1),
+                            "inputs": n.get("in", 0),
+                            "outputs": n.get("out", 0),
+                            "temp_lm75": n.get("t"),
+                            "backlight": n.get("bl", 50),
+                            "quality": n.get("q", 0)
+                        })
+                    
+                    payload = {
+                        "device_type": "gateway",
+                        "mac": gw_mac,
+                        "model": "ATmega1284P MQTT Gateway",
+                        "version": "2.1-beta",
+                        "ip": "192.168.1.66",
+                        "mqtt_connected": mqtt_conn,
+                        "mqtt_broker": "192.168.1.68:1883",
+                        "active_nodes": len(nodes_list),
+                        "throughput": f"{ptx + prx} pkt (Bus {health}%)",
+                        "free_ram": ram,
+                        "uptime_s": up,
+                        "temp": temp,
+                        "nodes": nodes_list
+                    }
+                    ingest_telemetry_dict(payload, client_ip="192.168.1.66")
+        except Exception:
+            pass
+        time.sleep(15)
 
 def main():
     init_db()
+
+    # Avvia thread daemon per polling automatico del Gateway Ethernet
+    gw_thread = threading.Thread(target=poll_gateway_loop, daemon=True)
+    gw_thread.start()
+
     server = ThreadingHTTPServer(('0.0.0.0', PORT), TelemetryHandler)
     server.daemon_threads = True
     print(f"Telemetry server running on port {PORT} (multithreaded)...")
