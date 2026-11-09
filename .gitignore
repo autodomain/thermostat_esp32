@@ -3,4 +3,11 @@
 .idea/
 *.bak
 *.orig
+*.exe
+flasher/build/
+flasher/dist/
+flasher/__pycache__/
+*.spec
+
+
 

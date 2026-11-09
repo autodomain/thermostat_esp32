@@ -1,0 +1,73 @@
+================================================================================
+  GUIDA ALL'AGGIORNAMENTO FIRMWARE - TERMOSTATO SMART ESP32 (v2.5)
+================================================================================
+
+Gentile Cliente,
+di seguito trovi i passaggi semplicissimi per aggiornare il tuo termostato 
+all'ultima versione software disponibile, comodamente dal tuo PC Windows.
+
+Non occorre installare alcun programma o driver speciale: l'applicazione 
+"Aggiornamento_Termostato_Smart.exe" contiene gia' tutto il necessario.
+
+
+--------------------------------------------------------------------------------
+1. COSA TI SERVE
+--------------------------------------------------------------------------------
+- Il tuo computer con Windows 10 o Windows 11 (64 bit).
+- Un comune cavetto micro-USB o USB-C (a seconda del modello) collegato al PC.
+  ATTENZIONE: assicurati che il cavo sia un cavo DATI e non solo di ricarica.
+- Il file "Aggiornamento_Termostato_Smart.exe".
+
+
+--------------------------------------------------------------------------------
+2. PROCEDURA DI AGGIORNAMENTO PASSO-PASSO
+--------------------------------------------------------------------------------
+1. Collega il termostato al PC tramite il cavetto USB.
+   Lo schermo del termostato si accendera'.
+
+2. Fai doppio clic sul file "Aggiornamento_Termostato_Smart.exe" per aprirlo.
+
+3. Il programma rilevera' automaticamente la porta COM corretta 
+   (ad esempio: "COM5 - USB-SERIAL CH340").
+   Se non compare subito, premi il pulsante "Rileva Porte".
+
+4. Seleziona il modello del tuo termostato:
+   - "ESP32-2432S028R (CYD - Cheap Yellow Display 2.8")" [Opzione standard predefinita]
+   oppure
+   - "AZ-Touch MOD (Display 2.8" Shield da parete)"
+
+5. Lascia spuntata la casella:
+   [X] "Conserva impostazioni (WiFi, MQTT, Crono, Calibrazione e Storico)"
+   In questo modo NON perderai la connessione Wi-Fi, la password, i tuoi 
+   orari programmati ne' la calibrazione!
+
+6. Clicca sul pulsante verde:
+   "🚀 AVVIA AGGIORNAMENTO FIRMWARE"
+
+7. Attendi circa 20-30 secondi:
+   Vedrai avanzare la barra di progresso fino al 100%.
+
+8. Al termine comparira' il messaggio di conferma:
+   "Aggiornamento Completato con Successo!"
+   Il termostato si riavviera' da solo con il nuovo firmware ed e' 
+   subito pronto all'uso!
+
+
+--------------------------------------------------------------------------------
+3. RISOLUZIONE PROBLEMI COMUNI
+--------------------------------------------------------------------------------
+- Se il programma dice "Impossibile collegarsi all'ESP32":
+  Scollega il cavo, tieni premuto il pulsante "BOOT" sulla scheda del termostato, 
+  ricollega il cavo USB e ripremi "Avvia Aggiornamento".
+
+- Se non compare alcuna porta COM:
+  Verifica di utilizzare un cavo USB che supporti il trasferimento dati. 
+  Se necessario, installa il driver universale "CH340 Windows Driver".
+
+- Se il programma dice "Porta COM occupata":
+  Chiudi eventuali altri programmi aperti che utilizzano la porta seriale 
+  (ad esempio monitor seriali, software di stampa 3D, ecc.).
+
+
+Per qualsiasi necessita' o chiarimento, l'assistenza tecnica e' a tua disposizione!
+================================================================================
