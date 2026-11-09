@@ -847,6 +847,7 @@ def ingest_telemetry_dict(data, client_ip="127.0.0.1"):
             node_outputs = n.get("outputs", 0)
             node_bk = n.get("backlight", 80)
 
+            node_is_online = bool(n.get("is_online"))
             node_extra = {
                 "node_id": n_id,
                 "gateway_id": gw_mac,
@@ -854,12 +855,12 @@ def ingest_telemetry_dict(data, client_ip="127.0.0.1"):
                 "inputs": node_inputs,
                 "outputs": node_outputs,
                 "temp_lm75": node_temp,
-                "backlight": node_bk
+                "backlight": node_bk,
+                "is_online": node_is_online
             }
             for k, v in n.items():
                 if k not in node_extra and k not in ("node_id", "id", "model", "version"):
                     node_extra[k] = v
-
             cur.execute('''
             INSERT INTO devices (
                 mac, device_type, model, version, last_ip, node_id, gateway_id,
@@ -874,12 +875,13 @@ def ingest_telemetry_dict(data, client_ip="127.0.0.1"):
                 last_ip = excluded.last_ip,
                 node_id = excluded.node_id,
                 gateway_id = excluded.gateway_id,
-                last_seen = excluded.last_seen,
+                last_seen = CASE WHEN ? = 1 THEN excluded.last_seen ELSE devices.last_seen END,
                 last_temp = excluded.last_temp,
                 extra_json = excluded.extra_json,
                 total_packets = devices.total_packets + 1
             ''', (node_mac, node_model, node_ver, client_ip, n_id, gw_mac,
-                  now_str, now_str, node_temp, n.get("uptime_s", 0), json.dumps(node_extra)))
+                  now_str, now_str if node_is_online else "2000-01-01 00:00:00", node_temp, n.get("uptime_s", 0), json.dumps(node_extra),
+                  1 if node_is_online else 0))
 
     conn.commit()
     conn.close()
@@ -961,6 +963,8 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                 model = (r.get("model") or "").lower()
 
                 if dtype == "io16" or "io16" in model or r.get("node_id") is not None:
+                    is_online = bool(extra.get("is_online", False)) and is_online
+                    r["is_online"] = is_online
                     io16_list.append(r)
                 elif dtype in ("gateway", "gateway_atmega128") or "gateway" in model or "atmega" in model:
                     gateways.append(r)
@@ -1114,12 +1118,25 @@ def poll_gateway_loop():
                     
                     nds_raw = d.get("nds", [])
                     nodes_list = []
+                    online_nodes_count = 0
                     for n in nds_raw:
                         if not isinstance(n, dict):
                             continue
                         nid = n.get("i")
                         if nid is None:
                             continue
+                        
+                        # Il flag 'o' indica se il nodo ha risposto al ping sul bus RS485 (1=online, 0=offline)
+                        node_is_online = (n.get("o") == 1)
+                        if node_is_online:
+                            online_nodes_count += 1
+                        
+                        # Se il nodo è presente in memoria EEPROM del gateway ma non è MAI stato visto
+                        # in questa sessione (l == 999999 o mai risposto) ed è offline (o == 0), non è collegato!
+                        sec_ago = n.get("l", 999999)
+                        if not node_is_online and sec_ago >= 999999:
+                            continue
+
                         nodes_list.append({
                             "node_id": nid,
                             "model": f"IO16 Keyboard vA",
@@ -1129,7 +1146,8 @@ def poll_gateway_loop():
                             "outputs": n.get("out", 0),
                             "temp_lm75": n.get("t"),
                             "backlight": n.get("bl", 50),
-                            "quality": n.get("q", 0)
+                            "quality": n.get("q", 0),
+                            "is_online": node_is_online
                         })
                     
                     payload = {
@@ -1140,7 +1158,7 @@ def poll_gateway_loop():
                         "ip": "192.168.1.66",
                         "mqtt_connected": mqtt_conn,
                         "mqtt_broker": "192.168.1.68:1883",
-                        "active_nodes": len(nodes_list),
+                        "active_nodes": online_nodes_count,
                         "throughput": f"{ptx + prx} pkt (Bus {health}%)",
                         "free_ram": ram,
                         "uptime_s": up,
