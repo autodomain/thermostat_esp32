@@ -370,21 +370,23 @@ void InitGUIslice_gen()
   gslc_ElemSetTxtEnc(&m_gui,pElemRef,GSLC_TXT_ENC_UTF8);
   
   // Create E_ELEM_TEXT_status runtime modifiable text
-  static char m_sDisplayText45[7] = "";
+  static char m_sDisplayText45[12] = "";
   pElemRef = gslc_ElemCreateTxt(&m_gui,E_ELEM_TEXT_status,E_PG_MAIN,(gslc_tsRect){6,70,77,20},
-    (char*)m_sDisplayText45,7,E_FREESANS12);
+    (char*)m_sDisplayText45,12,E_FREESANS12);
   gslc_ElemSetTxtAlign(&m_gui,pElemRef,GSLC_ALIGN_MID_RIGHT);
   gslc_ElemSetTxtCol(&m_gui,pElemRef,GSLC_COL_WHITE);
   gslc_ElemSetCol(&m_gui,pElemRef,GSLC_COL_GRAY,((gslc_tsColor){0,75,153}),GSLC_COL_BLACK);
+  gslc_ElemSetFillEn(&m_gui,pElemRef,true);
   m_pElemOutTxt_status = pElemRef;
   
   // Create E_ELEM_TEXT_STAT runtime modifiable text
-  static char m_sDisplayText46[6] = "";
+  static char m_sDisplayText46[10] = "";
   pElemRef = gslc_ElemCreateTxt(&m_gui,E_ELEM_TEXT_STAT,E_PG_MAIN,(gslc_tsRect){102,70,64,20},
-    (char*)m_sDisplayText46,6,E_FREESANS12);
+    (char*)m_sDisplayText46,10,E_FREESANS12);
   gslc_ElemSetTxtAlign(&m_gui,pElemRef,GSLC_ALIGN_MID_MID);
   gslc_ElemSetTxtCol(&m_gui,pElemRef,GSLC_COL_WHITE);
   gslc_ElemSetCol(&m_gui,pElemRef,GSLC_COL_GRAY,((gslc_tsColor){0,75,153}),GSLC_COL_BLACK);
+  gslc_ElemSetFillEn(&m_gui,pElemRef,true);
   m_pElemOutTxt_stat = pElemRef;
   
   // Create radio button E_ELEM_RADIO5

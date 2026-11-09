@@ -364,6 +364,7 @@ void connect();
 void messageReceived(String &topic, String &payload);
 void update_graph();
 void save_state_eeprom();
+void evaluate_thermostat_relay();
 void publish_ha_discovery();
 void publish_ha_state();
 void handle_telemetry();
@@ -518,6 +519,11 @@ bool CbBtnCommon(void* pvGui,void *pvElemRef,gslc_teTouch eTouch,int16_t nX,int1
         delay(15);
         break;
       case E_ELEM_BTN_MODE:
+        {
+          static unsigned long last_mode_press = 0;
+          if (millis() - last_mode_press < 350) break;
+          last_mode_press = millis();
+        }
         previousMillis_lcd = millis();
         lcd_set_bright();
         gslc_ElemSetVisible(&m_gui,m_pElemBtn_wake_up,false);
@@ -526,7 +532,6 @@ bool CbBtnCommon(void* pvGui,void *pvElemRef,gslc_teTouch eTouch,int16_t nX,int1
         if (stato == 0) set_thermostat_mode(1);
         else if (stato == 1) set_thermostat_mode(2);
         else set_thermostat_mode(0);
-        delay(10);
         break;
       case E_ELEM_BTN_MENU:
         previousMillis_lcd = millis();
@@ -1855,32 +1860,157 @@ void update_cyd_leds() {
 #endif
 }
 
+void evaluate_thermostat_relay() {
+  // Se il test pompa è attivo, salta il normale controllo del termostato
+  if (pump_test_active) {
+    if (m_pElemOutTxt_stat != NULL) gslc_ElemSetTxtStr(&m_gui, m_pElemOutTxt_stat, "PUMP");
+    digitalWrite(rele_pin, HIGH);
+    publish_ha_state();
+    return;
+  }
+
+  // Se il training termico guidato è attivo, mantieni il riscaldamento e gestisci il timer
+  if (training_guided_active) {
+    if (millis() >= training_guided_end_ms) {
+      cancel_or_finish_thermal_training(true);
+    } else {
+      static unsigned long last_train_tick = 0;
+      if (millis() - last_train_tick >= 10000UL) {
+        last_train_tick = millis();
+        unsigned long rem_sec = (training_guided_end_ms - millis()) / 1000UL;
+        unsigned long rem_min = (rem_sec + 59) / 60;
+        char tBuf[16];
+        snprintf(tBuf, sizeof(tBuf), "TRN %lum", rem_min);
+        if (m_pElemOutTxt_SetpointLbl != NULL) {
+          gslc_ElemSetTxtStr(&m_gui, m_pElemOutTxt_SetpointLbl, tBuf);
+        }
+      }
+      apply_relay_state(true);
+      if (!child_lock_active && m_pElemOutTxt_stat != NULL) gslc_ElemSetTxtStr(&m_gui, m_pElemOutTxt_stat, "TRN ");
+      publish_ha_state();
+      return;
+    }
+  }
+
+  float eff_t = get_effective_temperature();
+  bool temp_ok = !isnan(eff_t);
+
+  // 1. Controllo Prioritario Protezione Antigelo: se T < soglia (con isteresi a +1.0 °C)
+  // Non interviene se siamo in modalita Freddo / Estate (stato == 2)
+  if (temp_ok && antifrost_enabled && stato != 2) {
+    if (eff_t <= antifrost_temp_threshold) {
+      antifrost_active = true;
+    } else if (eff_t >= (antifrost_temp_threshold + 1.0f)) {
+      antifrost_active = false;
+    }
+  } else {
+    antifrost_active = false;
+  }
+
+  if (antifrost_active) {
+    Serial.println("ALLERTA: Antigelo attivo! Accensione forzata riscaldamento.");
+    if (rele_id[0] != 0 && client.connected()) client.publish(rele_id, "ON");
+    if (m_pElemOutTxt_stat != NULL) gslc_ElemSetTxtStr(&m_gui, m_pElemOutTxt_stat, "GELO");
+    apply_relay_state(true);
+    if (m_pElemOutTxt_SetpointLbl != NULL) {
+      char geloBuf[16];
+      snprintf(geloBuf, sizeof(geloBuf), "ANTIGELO %.0fC", antifrost_temp_threshold);
+      gslc_ElemSetTxtStr(&m_gui, m_pElemOutTxt_SetpointLbl, geloBuf);
+    }
+    publish_ha_state();
+    return;
+  }
+
+  // 2. Controllo Finestra Aperta (sensore locale o esterno via MQTT): sospende riscaldamento/raffrescamento
+  bool any_window_open = (open_window_enabled && open_window_active) || (ext_window_enabled && ext_window_open);
+  if (any_window_open) {
+    Serial.println("Finestra aperta: riscaldamento temporaneamente sospeso.");
+    if (rele_id[0] != 0 && client.connected()) client.publish(rele_id, "OFF");
+    if (m_pElemOutTxt_stat != NULL) gslc_ElemSetTxtStr(&m_gui, m_pElemOutTxt_stat, "WNDW");
+    apply_relay_state(false);
+    publish_ha_state();
+    return;
+  }
+
+  // Calcolo isteresi dinamica
+  float eff_hyst = hysteresis_enabled ? hysteresis_val : 0.05f;
+    
+  if (stato == 1 && temp_ok){
+    if (eff_t >= temp_setpoint){
+      //stacca rele
+      Serial.println("stacco rele");
+      if (rele_id[0]!=0 && client.connected()) client.publish(rele_id, "OFF");
+      if (!child_lock_active && m_pElemOutTxt_stat != NULL) gslc_ElemSetTxtStr(&m_gui,m_pElemOutTxt_stat,"OFF");
+      apply_relay_state(false);
+    }
+    else if(eff_t <= (temp_setpoint - eff_hyst)){   
+      //attacca rele  
+      Serial.println("attacco rele");
+      if (rele_id[0]!=0 && client.connected()) client.publish(rele_id, "ON");
+      if (!child_lock_active && m_pElemOutTxt_stat != NULL) gslc_ElemSetTxtStr(&m_gui,m_pElemOutTxt_stat,"ON ");
+      apply_relay_state(true);
+    }
+  }
+      
+  if (stato == 2 && temp_ok){
+    if (eff_t <= temp_setpoint){
+      //stacca rele
+      Serial.println("stacco rele");
+      if (rele_id[0]!=0 && client.connected()) client.publish(rele_id, "OFF");
+      if (!child_lock_active && m_pElemOutTxt_stat != NULL) gslc_ElemSetTxtStr(&m_gui,m_pElemOutTxt_stat,"OFF");
+      apply_relay_state(false);
+    }
+    else if(eff_t >= (temp_setpoint + eff_hyst)){
+      //attacca rele  
+      Serial.println("attacco rele");
+      if (rele_id[0]!=0 && client.connected()) client.publish(rele_id, "ON");
+      if (!child_lock_active && m_pElemOutTxt_stat != NULL) gslc_ElemSetTxtStr(&m_gui,m_pElemOutTxt_stat,"ON ");
+      apply_relay_state(true);
+    }
+  }
+  if (stato == 0){
+    //stacca rele
+    Serial.println("stacco rele");
+    if (rele_id[0]!=0 && client.connected()) client.publish(rele_id, "OFF");
+    if (!child_lock_active && m_pElemOutTxt_stat != NULL) gslc_ElemSetTxtStr(&m_gui,m_pElemOutTxt_stat,"---");
+    apply_relay_state(false);
+  }
+  publish_ha_state();
+}
+
 void set_thermostat_mode(int new_mode) {
   char myConc[80];
   snprintf(myConc, sizeof(myConc), "%smode/get", thermostat_id);
   if (new_mode == 1) {
     stato = 1;
     stato_shadow = 1;
-    gslc_ElemSetTxtStr(&m_gui,m_pElemOutTxt_status,"Caldo");
-    gslc_ElemSetTxtCol(&m_gui,m_pElemOutTxt_status,{255,0,0});
+    if (m_pElemOutTxt_status != NULL) {
+      gslc_ElemSetTxtStr(&m_gui,m_pElemOutTxt_status,"Caldo");
+      gslc_ElemSetTxtCol(&m_gui,m_pElemOutTxt_status,{255,0,0});
+    }
     if (client.connected()) client.publish(myConc,"heat",true,0);
   } else if (new_mode == 2) {
     stato = 2;
     stato_shadow = 2;
-    gslc_ElemSetTxtStr(&m_gui,m_pElemOutTxt_status,"Freddo");
-    gslc_ElemSetTxtCol(&m_gui,m_pElemOutTxt_status,{0,150,255});
+    if (m_pElemOutTxt_status != NULL) {
+      gslc_ElemSetTxtStr(&m_gui,m_pElemOutTxt_status,"Freddo");
+      gslc_ElemSetTxtCol(&m_gui,m_pElemOutTxt_status,{0,150,255});
+    }
     if (client.connected()) client.publish(myConc,"cool",true,0);
   } else {
-    stato_shadow = stato;
+    if (stato != 0) stato_shadow = stato;
     stato = 0;
-    gslc_ElemSetTxtStr(&m_gui,m_pElemOutTxt_status,"Spento");
-    gslc_ElemSetTxtCol(&m_gui,m_pElemOutTxt_status,{135,135,135});
+    if (m_pElemOutTxt_status != NULL) {
+      gslc_ElemSetTxtStr(&m_gui,m_pElemOutTxt_status,"Spento");
+      gslc_ElemSetTxtCol(&m_gui,m_pElemOutTxt_status,{135,135,135});
+    }
     if (client.connected()) client.publish(myConc,"off",true,0);
   }
+  evaluate_thermostat_relay();
+  previousMillis_rele = millis();
   save_state_eeprom();
   update_cyd_leds();
-  publish_ha_state();
-  gslc_Update(&m_gui);
+  // NOTE: do NOT call gslc_Update(&m_gui) here! It is called safely in main loop().
 }
 
 void handleRoot() {
@@ -3357,121 +3487,6 @@ void loop()
 
   if (currentMillis - previousMillis_rele >= interval_rele) {
     previousMillis_rele = currentMillis;       
-
-    // Se il test pompa è attivo, salta il normale controllo del termostato
-    if (pump_test_active) {
-      gslc_ElemSetTxtStr(&m_gui, m_pElemOutTxt_stat, "PUMP");
-      digitalWrite(rele_pin, HIGH);
-      publish_ha_state();
-      return;
-    }
-
-    // Se il training termico guidato è attivo, mantieni il riscaldamento e gestisci il timer
-    if (training_guided_active) {
-      if (millis() >= training_guided_end_ms) {
-        cancel_or_finish_thermal_training(true);
-      } else {
-        static unsigned long last_train_tick = 0;
-        if (millis() - last_train_tick >= 10000UL) {
-          last_train_tick = millis();
-          unsigned long rem_sec = (training_guided_end_ms - millis()) / 1000UL;
-          unsigned long rem_min = (rem_sec + 59) / 60;
-          char tBuf[16];
-          snprintf(tBuf, sizeof(tBuf), "TRN %lum", rem_min);
-          if (m_pElemOutTxt_SetpointLbl != NULL) {
-            gslc_ElemSetTxtStr(&m_gui, m_pElemOutTxt_SetpointLbl, tBuf);
-          }
-        }
-        apply_relay_state(true);
-        if (!child_lock_active) gslc_ElemSetTxtStr(&m_gui, m_pElemOutTxt_stat, "TRN ");
-        publish_ha_state();
-        return;
-      }
-    }
-
-    float eff_t = get_effective_temperature();
-    bool temp_ok = !isnan(eff_t);
-
-    // 1. Controllo Prioritario Protezione Antigelo: se T < soglia (con isteresi a +1.0 °C)
-    // Non interviene se siamo in modalita Freddo / Estate (stato == 2)
-    if (temp_ok && antifrost_enabled && stato != 2) {
-      if (eff_t <= antifrost_temp_threshold) {
-        antifrost_active = true;
-      } else if (eff_t >= (antifrost_temp_threshold + 1.0f)) {
-        antifrost_active = false;
-      }
-    } else {
-      antifrost_active = false;
-    }
-
-    if (antifrost_active) {
-      Serial.println("ALLERTA: Antigelo attivo! Accensione forzata riscaldamento.");
-      if (rele_id[0] != 0 && client.connected()) client.publish(rele_id, "ON");
-      gslc_ElemSetTxtStr(&m_gui, m_pElemOutTxt_stat, "GELO");
-      apply_relay_state(true);
-      if (m_pElemOutTxt_SetpointLbl != NULL) {
-        char geloBuf[16];
-        snprintf(geloBuf, sizeof(geloBuf), "ANTIGELO %.0fC", antifrost_temp_threshold);
-        gslc_ElemSetTxtStr(&m_gui, m_pElemOutTxt_SetpointLbl, geloBuf);
-      }
-      publish_ha_state();
-      return;
-    }
-
-    // 2. Controllo Finestra Aperta (sensore locale o esterno via MQTT): sospende riscaldamento/raffrescamento
-    bool any_window_open = (open_window_enabled && open_window_active) || (ext_window_enabled && ext_window_open);
-    if (any_window_open) {
-      Serial.println("Finestra aperta: riscaldamento temporaneamente sospeso.");
-      if (rele_id[0] != 0 && client.connected()) client.publish(rele_id, "OFF");
-      gslc_ElemSetTxtStr(&m_gui, m_pElemOutTxt_stat, "WNDW");
-      apply_relay_state(false);
-      publish_ha_state();
-      return;
-    }
-
-    // Calcolo isteresi dinamica
-    float eff_hyst = hysteresis_enabled ? hysteresis_val : 0.05f;
-      
-    if (stato == 1 && temp_ok){
-      if (eff_t >= temp_setpoint){
-        //stacca rele
-        Serial.println("stacco rele");
-        if (rele_id[0]!=0 && client.connected()) client.publish(rele_id, "OFF");
-        if (!child_lock_active) gslc_ElemSetTxtStr(&m_gui,m_pElemOutTxt_stat,"OFF");
-        apply_relay_state(false);
-      }
-      else if(eff_t <= (temp_setpoint - eff_hyst)){   
-        //attacca rele  
-        Serial.println("attacco rele");
-        if (rele_id[0]!=0 && client.connected()) client.publish(rele_id, "ON");
-        if (!child_lock_active) gslc_ElemSetTxtStr(&m_gui,m_pElemOutTxt_stat,"ON ");
-        apply_relay_state(true);
-      }
-    }
-        
-    if (stato == 2 && temp_ok){
-      if (eff_t <= temp_setpoint){
-        //stacca rele
-        Serial.println("stacco rele");
-        if (rele_id[0]!=0 && client.connected()) client.publish(rele_id, "OFF");
-        if (!child_lock_active) gslc_ElemSetTxtStr(&m_gui,m_pElemOutTxt_stat,"OFF");
-        apply_relay_state(false);
-      }
-      else if(eff_t >= (temp_setpoint + eff_hyst)){
-        //attacca rele  
-        Serial.println("attacco rele");
-        if (rele_id[0]!=0 && client.connected()) client.publish(rele_id, "ON");
-        if (!child_lock_active) gslc_ElemSetTxtStr(&m_gui,m_pElemOutTxt_stat,"ON ");
-        apply_relay_state(true);
-      }
-    }
-    if (stato == 0){
-      //stacca rele
-      Serial.println("stacco rele");
-      if (rele_id[0]!=0 && client.connected()) client.publish(rele_id, "OFF");
-      if (!child_lock_active) gslc_ElemSetTxtStr(&m_gui,m_pElemOutTxt_stat,"---");
-      apply_relay_state(false);
-    }
-    publish_ha_state();
+    evaluate_thermostat_relay();
   }
 }
