@@ -1,0 +1,30 @@
+{
+  "app": "termostato_smart",
+  "version": "2.5.0",
+  "release_date": "2026-11-09",
+  "min_hardware_version": "1.0",
+  "firmware": {
+    "cyd": {
+      "name": "ESP32-2432S028R (CYD 2.8\")",
+      "binary_url": "https://raw.githubusercontent.com/autodomain/thermostat_esp32/main/flasher/bin/cyd/firmware.bin",
+      "version": "2.5.0"
+    },
+    "az_touch": {
+      "name": "AZ-Touch MOD (2.8\")",
+      "binary_url": "https://raw.githubusercontent.com/autodomain/thermostat_esp32/main/flasher/bin/az_touch/firmware.bin",
+      "version": "2.5.0"
+    }
+  },
+  "changelog": [
+    "Modello termico con auto-apprendimento inerzia edificio (filtro EMA)",
+    "Calibrazione termica rapida guidata di 30 minuti",
+    "Optimum Start (anticipo termico intelligente)",
+    "Climatizzazione Estate/Inverno (Heat & Cool)",
+    "Duty Cycle caldaia oggi e storico consumi",
+    "Preset avanzati (Eco, Away, Boost temporizzato)",
+    "Sensore remoto prioritario e media 50/50 con fallback 30m",
+    "Controllo di versione integrato (Web UI, LCD, MQTT, USB Seriale)",
+    "Nuovo Flasher Windows (.exe) standalone con controllo automatico di versione"
+  ]
+}
+

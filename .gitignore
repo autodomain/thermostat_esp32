@@ -11,3 +11,6 @@ flasher/__pycache__/
 
 
 
+
+build_pyinstaller/
+*.spec

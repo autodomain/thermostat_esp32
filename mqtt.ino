@@ -199,6 +199,9 @@ void publish_ha_state() {
   snprintf(topic, sizeof(topic), "%straining_active/get", thermostat_id);
   client.publish(topic, training_guided_active ? "ON" : "OFF", true, 0);
 
+  snprintf(topic, sizeof(topic), "%sversion/get", thermostat_id);
+  client.publish(topic, FIRMWARE_VERSION, true, 0);
+
   if (WiFi.status() == WL_CONNECTED) {
     int rssi = WiFi.RSSI();
     snprintf(buf, sizeof(buf), "%d", rssi);
@@ -391,7 +394,7 @@ void publish_ha_discovery() {
     dev["sa"]   = get_floor_name() + " - " + get_room_name();
     dev["mdl"]  = "Termostato Smart Touch ESP32";
     dev["mf"]   = "AutoDomain";
-    dev["sw"]   = "2.5.0";
+    dev["sw"]   = FIRMWARE_VERSION;
     dev["cu"]   = ipUrl;
 
     String payload;
@@ -1283,6 +1286,27 @@ void publish_ha_discovery() {
     String payload;
     serializeJson(doc, payload);
     String discTopic = "homeassistant/button/" + devId + "_stop_training/config";
+    client.publish(discTopic.c_str(), payload.c_str(), true, 0);
+  }
+
+  // 41. Sensore Versione Firmware
+  {
+    DynamicJsonDocument doc(512);
+    doc["~"]        = baseTopic;
+    doc["name"]     = "Versione Firmware " + zoneName;
+    doc["obj_id"]   = "termostato_" + zoneSlug + "_firmware";
+    doc["uniq_id"]  = devId + "_firmware";
+    doc["stat_t"]   = "~version/get";
+    doc["avty_t"]   = "~status";
+    doc["icon"]     = "mdi:cellphone-arrow-down";
+    doc["entity_category"] = "diagnostic";
+    JsonObject dev  = doc.createNestedObject("dev");
+    JsonArray ids   = dev.createNestedArray("ids");
+    ids.add(devId);
+
+    String payload;
+    serializeJson(doc, payload);
+    String discTopic = "homeassistant/sensor/" + devId + "_firmware/config";
     client.publish(discTopic.c_str(), payload.c_str(), true, 0);
   }
 

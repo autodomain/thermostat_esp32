@@ -25,6 +25,20 @@
 #include <EEPROM.h>
 #include <GUIslice.h>
 
+#define FIRMWARE_VERSION "2.5.0"
+#define FIRMWARE_BUILD_DATE __DATE__ " " __TIME__
+
+#if defined(HARDWARE_CYD)
+  #define HARDWARE_MODEL_NAME "CYD (ESP32-2432S028R)"
+  #define HARDWARE_MODEL_CODE "cyd"
+#else
+  #define HARDWARE_MODEL_NAME "AZ-Touch MOD (2.8\")"
+  #define HARDWARE_MODEL_CODE "az_touch"
+#endif
+
+// Firma univoca memorizzata in flash per scansione e controllo versione
+const char FIRMWARE_SIGNATURE[] __attribute__((used)) = "###AUTODOMAIN_FW_v2.5.0###";
+
 // define the number of bytes you want to access
 #define EEPROM_SIZE 16
 #define EEPROM_MAGIC_ADDR  1
@@ -352,6 +366,8 @@ void update_graph();
 void save_state_eeprom();
 void publish_ha_discovery();
 void publish_ha_state();
+void handle_telemetry();
+void send_telemetry_now();
 String get_zone_name();
 String get_zone_slug();
 String get_house_name();
@@ -2414,7 +2430,9 @@ void handleRoot() {
   html += "  if(auto)updateAutoTopic();";
   html += "}";
   html += "</script>";
-
+  html += "<footer style='text-align:center;font-size:12px;color:#64748b;margin:25px 0 15px 0;border-top:1px solid #1e293b;padding-top:12px;'>";
+  html += "Termostato Smart ESP32 &bull; <b>Firmware v" FIRMWARE_VERSION "</b> &bull; Modello: <span style='color:#38bdf8;'>" HARDWARE_MODEL_NAME "</span> &bull; Build: " FIRMWARE_BUILD_DATE;
+  html += "</footer>";
   html += "</body></html>";
   webServer.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
   webServer.send(200, "text/html", html);
@@ -2422,6 +2440,11 @@ void handleRoot() {
 
 void setup_web_server() {
   webServer.on("/", HTTP_GET, handleRoot);
+
+  webServer.on("/version", HTTP_GET, []() {
+    String json = "{\"app\":\"termostato_smart\",\"version\":\"" FIRMWARE_VERSION "\",\"model\":\"" HARDWARE_MODEL_CODE "\",\"build\":\"" FIRMWARE_BUILD_DATE "\"}";
+    webServer.send(200, "application/json", json);
+  });
 
   webServer.on("/ctrl", HTTP_GET, []() {
     if (webServer.hasArg("sp")) {
@@ -2801,7 +2824,12 @@ void deleteFile(fs::FS &fs, const char * path){
 void setup()
 {
   Serial.begin(115200);
-  Serial.println("Restarting...");
+  Serial.printf("\n==================================================\n");
+  Serial.printf(" TERMOSTATO SMART ESP32 - AutoDomain\n");
+  Serial.printf(" Firmware Version : v%s (%s)\n", FIRMWARE_VERSION, FIRMWARE_BUILD_DATE);
+  Serial.printf(" Hardware Model   : %s\n", HARDWARE_MODEL_NAME);
+  Serial.printf(" MAC / Chip ID    : %012llX\n", ESP.getEfuseMac());
+  Serial.printf("==================================================\n\n");
   char buffer[12];
 
   chipId = 0;
@@ -3105,11 +3133,39 @@ void setup()
   previousMillis_lcd = millis();
 }
 
+void handle_serial_commands() {
+  static String serial_cmd_buf = "";
+  while (Serial.available() > 0) {
+    char c = (char)Serial.read();
+    if (c == '\n' || c == '\r') {
+      if (serial_cmd_buf.length() > 0) {
+        serial_cmd_buf.trim();
+        serial_cmd_buf.toUpperCase();
+        if (serial_cmd_buf == "VER" || serial_cmd_buf == "VERSION") {
+          Serial.printf("{\"app\":\"termostato_smart\",\"version\":\"%s\",\"hw\":\"%s\",\"build\":\"%s\",\"mac\":\"%012llX\"}\n",
+                        FIRMWARE_VERSION, HARDWARE_MODEL_CODE, FIRMWARE_BUILD_DATE, ESP.getEfuseMac());
+        } else if (serial_cmd_buf == "TELEM" || serial_cmd_buf == "TELEMETRY") {
+          send_telemetry_now();
+          Serial.println("{\"telemetry\":\"sent\"}");
+        } else if (serial_cmd_buf == "REBOOT" || serial_cmd_buf == "RESTART") {
+          Serial.println("{\"reboot\":true}");
+          delay(100);
+          ESP.restart();
+        }
+        serial_cmd_buf = "";
+      }
+    } else if (serial_cmd_buf.length() < 64) {
+      serial_cmd_buf += c;
+    }
+  }
+}
+
 // -----------------------------------
 // Main event loop
 // -----------------------------------
 void loop()
 {
+  handle_serial_commands();
   if (reset_config_reboot) {
     reset_config_reboot = false;
     if (!ap_mode_active) {
@@ -3154,6 +3210,7 @@ void loop()
     if (!client.connected()) {
       connect();
     }
+    handle_telemetry();
   } else {
     was_connected = false;
   }
