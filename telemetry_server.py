@@ -1026,6 +1026,59 @@ class TelemetryHandler(BaseHTTPRequestHandler):
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (mac, dtype, now_str, temp, target_temp, humidity, heating, mode, rssi, free_heap, uptime, extra_json))
 
+        # Se il payload include nodi IO16 aggregati dal Gateway, li registra o aggiorna in batch
+        nodes_list = data.get("nodes")
+        if isinstance(nodes_list, list):
+            gw_mac = mac
+            for n in nodes_list:
+                if not isinstance(n, dict):
+                    continue
+                n_id = n.get("node_id") if n.get("node_id") is not None else n.get("id")
+                if n_id is None:
+                    continue
+                node_mac = f"io16_{gw_mac}_{n_id}"
+                node_model = n.get("model", "IO16 Keyboard")
+                node_ver = n.get("version", version)
+                node_temp = n.get("temp_lm75") if n.get("temp_lm75") is not None else n.get("temp")
+                node_bus = n.get("bus", 0)
+                node_inputs = n.get("inputs", 0)
+                node_outputs = n.get("outputs", 0)
+                node_bk = n.get("backlight", 80)
+
+                node_extra = {
+                    "node_id": n_id,
+                    "gateway_id": gw_mac,
+                    "bus": node_bus,
+                    "inputs": node_inputs,
+                    "outputs": node_outputs,
+                    "temp_lm75": node_temp,
+                    "backlight": node_bk
+                }
+                for k, v in n.items():
+                    if k not in node_extra and k not in ("node_id", "id", "model", "version"):
+                        node_extra[k] = v
+
+                cur.execute('''
+                INSERT INTO devices (
+                    mac, device_type, model, version, last_ip, node_id, gateway_id,
+                    first_seen, last_seen, last_temp, last_target, last_humidity,
+                    last_heating, last_rssi, last_uptime, last_heap, extra_json, total_packets
+                )
+                VALUES (?, 'io16', ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 0, 0, ?, 0, ?, 1)
+                ON CONFLICT(mac) DO UPDATE SET
+                    device_type = 'io16',
+                    model = excluded.model,
+                    version = excluded.version,
+                    last_ip = excluded.last_ip,
+                    node_id = excluded.node_id,
+                    gateway_id = excluded.gateway_id,
+                    last_seen = excluded.last_seen,
+                    last_temp = excluded.last_temp,
+                    extra_json = excluded.extra_json,
+                    total_packets = devices.total_packets + 1
+                ''', (node_mac, node_model, node_ver, client_ip, n_id, gw_mac,
+                      now_str, now_str, node_temp, n.get("uptime_s", 0), json.dumps(node_extra)))
+
         conn.commit()
         conn.close()
 
