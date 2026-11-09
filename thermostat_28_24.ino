@@ -504,7 +504,10 @@ bool CbBtnCommon(void* pvGui,void *pvElemRef,gslc_teTouch eTouch,int16_t nX,int1
         play_beep(2800, 22);
         temp_setpoint = round((temp_setpoint + 0.1f) * 10.0f) / 10.0f;
         save_state_eeprom();
+        evaluate_thermostat_relay();
+        previousMillis_rele = millis();
         publish_ha_state();
+        send_telemetry_now();
         delay(15);
         break;
       case E_ELEM_BTN_DEC:
@@ -515,7 +518,10 @@ bool CbBtnCommon(void* pvGui,void *pvElemRef,gslc_teTouch eTouch,int16_t nX,int1
         play_beep(2200, 22);
         temp_setpoint = round((temp_setpoint - 0.1f) * 10.0f) / 10.0f;
         save_state_eeprom();
+        evaluate_thermostat_relay();
+        previousMillis_rele = millis();
         publish_ha_state();
+        send_telemetry_now();
         delay(15);
         break;
       case E_ELEM_BTN_MODE:
@@ -1600,6 +1606,8 @@ void apply_relay_state(bool on_state) {
       }
       cycle_tracking_active = false;
     }
+    // Invia telemetria immediata al server al cambio stato relè caldaia
+    send_telemetry_now();
   }
 }
 
@@ -2010,6 +2018,7 @@ void set_thermostat_mode(int new_mode) {
   previousMillis_rele = millis();
   save_state_eeprom();
   update_cyd_leds();
+  send_telemetry_now();
   // NOTE: do NOT call gslc_Update(&m_gui) here! It is called safely in main loop().
 }
 
@@ -2583,6 +2592,8 @@ void setup_web_server() {
       char buf[10];
       dtostrf(temp_setpoint, 0, 1, buf);
       gslc_ElemSetTxtStr(&m_gui, m_pElemOutTxt_Temp_Setpoint, buf);
+      evaluate_thermostat_relay();
+      previousMillis_rele = millis();
       publish_ha_state();
       play_beep(2600, 20);
     }
@@ -2767,6 +2778,7 @@ void setup_web_server() {
     lcd_set_bright();
     gslc_ElemSetVisible(&m_gui, m_pElemBtn_wake_up, false);
     gslc_ElemSetVisible(&m_gui, m_pElemBtn_wake_up2, false);
+    send_telemetry_now();
     webServer.sendHeader("Location", "/");
     webServer.send(303);
   });
@@ -2986,16 +2998,15 @@ void setup()
   lcd_set_bright();
   digitalWrite(rele_pin, LOW);
 
-  // Initialize I2C and run initial I2C scan + BME280 init
-  run_i2c_scan(i2c_sda_pin, i2c_scl_pin);
-
   EEPROM.begin(EEPROM_SIZE);
   slider_pos = EEPROM.read(0);
   if (slider_pos > 100){
     EEPROM.write(0, 50);
     EEPROM.commit();
-    slider_pos=50;
+    slider_pos = 50;
   }
+  temperature_offset = (slider_pos - 50) / 10.0f;
+
   if (EEPROM.read(EEPROM_MAGIC_ADDR) == EEPROM_MAGIC_VAL) {
     uint8_t saved_mode = EEPROM.read(EEPROM_MODE_ADDR);
     if (saved_mode <= 2) {
@@ -3013,11 +3024,14 @@ void setup()
       crono_enabled = (saved_cro == 1);
       current_preset_mode = crono_enabled ? "schedule" : "none";
     }
-    Serial.printf("Restored from EEPROM: setpoint=%.1f C, mode=%d, buzzer=%d, crono=%d\n",
-                  temp_setpoint, stato, buzzer_enabled, crono_enabled);
+    Serial.printf("Restored from EEPROM: setpoint=%.1f C, mode=%d, buzzer=%d, crono=%d, offset=%.1f C\n",
+                  temp_setpoint, stato, buzzer_enabled, crono_enabled, temperature_offset);
   } else {
     save_state_eeprom();
   }
+
+  // Initialize I2C and run initial I2C scan + BME280 init (with correct temperature_offset already set!)
+  run_i2c_scan(i2c_sda_pin, i2c_scl_pin);
 
   // Initialize GUIslice display
   gslc_InitDebug(&DebugOut);

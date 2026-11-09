@@ -5,7 +5,7 @@
 char telemetry_host[64] = "192.168.1.68";
 int  telemetry_port     = 8088;
 unsigned long last_telemetry_ms = 0;
-const unsigned long TELEMETRY_INTERVAL_MS = 15UL * 60UL * 1000UL; // 15 minuti
+const unsigned long TELEMETRY_INTERVAL_MS = 30000UL; // 30 secondi per aggiornamento live
 
 bool send_telemetry_now() {
   if (WiFi.status() != WL_CONNECTED) {
@@ -14,7 +14,7 @@ bool send_telemetry_now() {
   }
 
   WiFiClient client;
-  client.setTimeout(3); // 3 secondi timeout
+  client.setTimeout(2); // 2 secondi timeout
 
   if (!client.connect(telemetry_host, telemetry_port)) {
     Serial.println("[TELEMETRY] Connessione al server fallita");
@@ -37,8 +37,9 @@ bool send_telemetry_now() {
   float h = averageValueH.average();
   doc["humidity"] = isnan(h) ? 0.0 : round(h * 10.0f) / 10.0f;
 
-  doc["heating"] = (stato == 1);
-  doc["mode"] = crono_enabled ? 2 : (stato ? 1 : 0);
+  // Stato effettivo del relè locale (caldaia attiva se HIGH)
+  doc["heating"] = (digitalRead(rele_pin) == HIGH);
+  doc["mode"] = crono_enabled ? 2 : stato;
   doc["rssi"] = WiFi.RSSI();
   doc["free_heap"] = ESP.getFreeHeap();
   doc["uptime_s"] = millis() / 1000UL;
