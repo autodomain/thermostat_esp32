@@ -254,6 +254,7 @@ HTML_DASHBOARD = '''<!DOCTYPE html>
         .badge-online { background: rgba(34, 197, 94, 0.15); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.3); }
         .badge-offline { background: rgba(100, 116, 139, 0.15); color: #94a3b8; border: 1px solid rgba(100, 116, 139, 0.3); }
         .badge-heat-on { background: rgba(249, 115, 22, 0.2); color: #fb923c; border: 1px solid rgba(249, 115, 22, 0.4); animation: pulse 2s infinite; }
+        .badge-cool-on { background: rgba(56, 189, 248, 0.2); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4); animation: pulse 2s infinite; }
         .badge-heat-off { background: rgba(148, 163, 184, 0.1); color: #64748b; }
         .badge-io16 { background: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.3); }
         .badge-gw { background: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); }
@@ -415,7 +416,7 @@ HTML_DASHBOARD = '''<!DOCTYPE html>
                     <th>Versione FW</th>
                     <th>Temp / Target</th>
                     <th>Umidit&agrave;</th>
-                    <th>Caldaia</th>
+                    <th>Stato Impianto</th>
                     <th>WiFi RSSI</th>
                     <th>Ultimo Ping</th>
                     <th>Azioni</th>
@@ -587,9 +588,21 @@ HTML_DASHBOARD = '''<!DOCTYPE html>
                         const onlineBadge = d.is_online 
                             ? '<span class="badge badge-online">&bull; Online</span>' 
                             : '<span class="badge badge-offline">&bull; Offline</span>';
-                        const heatBadge = d.last_heating 
-                            ? '<span class="badge badge-heat-on">&bull; ACCESA</span>' 
-                            : '<span class="badge badge-heat-off">SPENTA</span>';
+                        const mode = (d.extra && d.extra.mode !== undefined) ? d.extra.mode : (d.mode != null ? d.mode : 1);
+                        let heatBadge;
+                        if (d.last_heating) {
+                            if (mode === 2) {
+                                heatBadge = '<span class="badge badge-cool-on">&bull; FREDDO ON</span>';
+                            } else {
+                                heatBadge = '<span class="badge badge-heat-on">&bull; CALDO ON</span>';
+                            }
+                        } else {
+                            if (mode === 0) {
+                                heatBadge = '<span class="badge badge-heat-off">SPENTO</span>';
+                            } else {
+                                heatBadge = '<span class="badge badge-heat-off">A REGIME (OFF)</span>';
+                            }
+                        }
                         const hwName = d.model === 'cyd' ? 'CYD 2.8&Prime;' : (d.model === 'az_touch' ? 'AZ-Touch 2.4&Prime;' : (d.model || 'ESP32'));
                         return `
                             <tr>
@@ -735,7 +748,7 @@ HTML_DASHBOARD = '''<!DOCTYPE html>
                         <td>${formatLocalDate(h.timestamp)}</td>
                         <td><span class="badge ${h.device_type === 'io16' ? 'badge-io16' : (h.device_type === 'gateway' ? 'badge-gw' : 'badge-fw')}">${h.device_type || 'thermostat'}</span></td>
                         <td><strong>${h.temp != null ? h.temp.toFixed(1) + '°C' : '-'}</strong></td>
-                        <td>${h.heating ? '<span style="color:#f97316">ATTIVO</span>' : 'OFF'}</td>
+                        <td>${h.heating ? (h.mode === 2 ? '<span style="color:#38bdf8;font-weight:600">&bull; FREDDO ON</span>' : '<span style="color:#f97316;font-weight:600">&bull; CALDO ON</span>') : '<span style="color:#64748b">OFF</span>'}</td>
                         <td>${h.rssi ? h.rssi + ' dBm' : '-'}</td>
                         <td>${h.free_heap ? (h.free_heap/1024).toFixed(0) + ' KB' : '-'}</td>
                         <td>${h.uptime_s ? h.uptime_s + ' s' : '-'}</td>
@@ -799,6 +812,9 @@ def ingest_telemetry_dict(data, client_ip="127.0.0.1"):
                   "humidity", "heating", "mode", "rssi", "uptime_s", "free_heap", "free_ram", 
                   "node_id", "gateway_id"}
     extra_dict = {k: v for k, v in data.items() if k not in known_keys}
+    extra_dict["mode"] = mode
+    if "crono" in data:
+        extra_dict["crono"] = data.get("crono")
     if node_id is not None:
         extra_dict["node_id"] = node_id
     if gateway_id:

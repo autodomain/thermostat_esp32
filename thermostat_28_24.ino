@@ -171,7 +171,7 @@ const char* ntpServer = "192.168.1.250";
 const long  gmtOffset_sec = 3600;
 const int   daylightOffset_sec = 3600;
 
-char mqtt_server[45]="192.168.1.250";
+char mqtt_server[45]="192.168.1.68";
 char mqtt_user[32]="admin";
 char mqtt_pass[45]="bermuda175209";
 char house_name[32] = "Casa";

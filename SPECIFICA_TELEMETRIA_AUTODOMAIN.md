@@ -223,6 +223,6 @@ void send_gateway_unified_telemetry() {
 
 La dashboard sul Raspberry Pi ([http://192.168.1.68:8088](http://192.168.1.68:8088)) organizza automaticamente i dispositivi in 3 riquadri dedicati:
 1. **KPI Header**: Totale Flotta, Termostati Online, Nodi IO16 Attivi, Gateway Connessi.
-2. **Riquadro Termostati Smart ESP32**: Temperature, umidità, stato caldaia, RSSI WiFi, storico e tasto Elimina.
+2. **Riquadro Termostati Smart ESP32**: Temperature, umidità, stato impianto (Caldo / Freddo / Spento), RSSI WiFi, storico e tasto Elimina.
 3. **Riquadro Interfacce IO16**: ID Nodo, Gateway di riferimento, Bus RS485, visualizzatore grafico a 8 bit di pulsanti e LED, temperatura LM75, backlight PWM e tasto Elimina.
 4. **Riquadro Gateway MQTT ATmega1284P**: MAC/IP W5500, broker MQTT, nodi periferici gestiti, throughput e RAM libera.
